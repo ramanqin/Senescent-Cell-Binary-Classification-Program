@@ -1,0 +1,23 @@
+{
+  "input_dir": "D:/your_preprocessed_spectra",
+  "output_dir": "D:/your_analysis_result",
+  "negative_class": {
+    "name": "年轻",
+    "folders": ["年轻", "年轻细胞", "young"]
+  },
+  "positive_class": {
+    "name": "衰老",
+    "folders": ["衰老", "衰老细胞", "aging"]
+  },
+  "extensions": ["txt", "csv", "dat"],
+  "sample_depth_after_class": 1,
+  "outer_splits": 5,
+  "inner_splits": 4,
+  "random_seed": 42,
+  "pca_variance": 0.95,
+  "class_weight": "balanced",
+  "n_jobs": -1,
+  "c_values": [0.01, 0.1, 1.0, 10.0, 100.0],
+  "gamma_values": ["scale", 0.01, 0.1, 1.0],
+  "roc_filename": "ROC.png"
+}

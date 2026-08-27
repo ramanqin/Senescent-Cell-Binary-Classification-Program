@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import csv
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -55,8 +56,6 @@ def load_config(path: str | Path) -> dict:
         "roc_filename": "ROC.png",
         "grid_tolerance": 1e-6,
         "min_points": 20,
-        "auto_align_grid": True,
-        "resample_step": 3.0,
     }
     for key, value in defaults.items():
         config.setdefault(key, value)
@@ -120,7 +119,7 @@ def class_lookup(config: dict) -> dict[str, tuple[int, str]]:
     return lookup
 
 
-def identify_sample(path: Path, input_root: Path, config: dict) -> tuple[int, str, str, str]:
+def identify_sample(path: Path, input_root: Path, config: dict) -> tuple[int, str, str, str, str]:
     parts = path.relative_to(input_root).parts
     lookup = class_lookup(config)
     depth = int(config["sample_depth_after_class"])
@@ -136,8 +135,10 @@ def identify_sample(path: Path, input_root: Path, config: dict) -> tuple[int, st
             folder = path.stem
         else:
             raise ValueError(f"类别目录后没有找到样本文件夹：{path}")
-        sample_id = f"{class_name}/{folder}"
-        return code, class_name, folder, sample_id
+        prefix = parts[:index]
+        batch_id = "/".join(prefix) if prefix else input_root.name
+        sample_id = f"{batch_id}/{class_name}/{folder}"
+        return code, class_name, folder, batch_id, sample_id
     raise ValueError(f"路径中没有找到配置的类别目录：{path}")
 
 
@@ -145,23 +146,43 @@ def load_samples(config: dict) -> dict:
     input_root = Path(config["input_dir"])
     output_root = Path(config["output_dir"]).resolve()
     extensions = {"." + value.lower().lstrip(".") for value in config["extensions"]}
+    excluded_names = {"run_manifest.csv", "preprocessing_manifest.csv", "predictions.csv", "metrics.json"}
     files = sorted(
         path for path in input_root.rglob("*")
         if path.is_file()
         and path.suffix.lower() in extensions
         and not path.resolve().is_relative_to(output_root)
+        and path.name.casefold() not in excluded_names
+        and not path.name.startswith("处理报告_")
+        and not any(
+            part.casefold() in {"failed", "result_plot", "__pycache__"}
+            for part in path.relative_to(input_root).parts[:-1]
+        )
     )
     if not files:
         raise FileNotFoundError("输入目录中没有找到光谱文件")
 
     records: list[tuple[str, Path, np.ndarray, np.ndarray]] = []
-    metadata: dict[str, tuple[int, str, str]] = {}
+    metadata: dict[str, tuple[int, str, str, str]] = {}
+    spectrum_manifest: list[dict] = []
 
     for path in files:
-        code, class_name, folder, sample_id = identify_sample(path, input_root, config)
+        code, class_name, folder, batch_id, sample_id = identify_sample(path, input_root, config)
         x, y = read_spectrum(path, int(config["min_points"]))
         records.append((sample_id, path, x, y))
-        metadata[sample_id] = (code, class_name, folder)
+        metadata[sample_id] = (code, class_name, folder, batch_id)
+        spectrum_manifest.append({
+            "stage": "modeling_input",
+            "source_root": str(input_root.resolve()),
+            "source_path": str(path.resolve()),
+            "relative_path": path.relative_to(input_root).as_posix(),
+            "batch_id": batch_id,
+            "sample_id": sample_id,
+            "sample_folder": folder,
+            "class_code": code,
+            "class_name": class_name,
+            "status": "included",
+        })
 
     first_x = records[0][2]
     tolerance = float(config["grid_tolerance"])
@@ -175,42 +196,24 @@ def load_samples(config: dict) -> dict:
         for _, _, x, _ in records
     }
 
-    if grids_are_equal:
-        reference_x = first_x
-        aligned_records = [(sample_id, y) for sample_id, _, _, y in records]
-        grid_aligned = False
-    else:
-        if not bool(config.get("auto_align_grid", True)):
-            _, mismatch_path, mismatch_x, _ = next(
-                record for record in records[1:]
-                if len(record[2]) != len(first_x)
-                or not np.allclose(record[2], first_x, rtol=0, atol=tolerance)
-            )
-            raise ValueError(
-                "波数网格不一致。参考光谱："
-                f"{len(first_x)}点，{first_x[0]:.3f}–{first_x[-1]:.3f} cm⁻¹；"
-                f"不一致文件：{mismatch_path}，{len(mismatch_x)}点，"
-                f"{mismatch_x[0]:.3f}–{mismatch_x[-1]:.3f} cm⁻¹。"
-                "请启用自动统一波数网格，或先用预处理软件重采样。"
-            )
+    if not grids_are_equal:
+        _, mismatch_path, mismatch_x, _ = next(
+            record for record in records[1:]
+            if len(record[2]) != len(first_x)
+            or not np.allclose(record[2], first_x, rtol=0, atol=tolerance)
+        )
+        reference_path = records[0][1]
+        raise ValueError(
+            "波数网格不一致，PCA-SVM不会自动插值。参考光谱："
+            f"{reference_path}，{len(first_x)}点，"
+            f"{first_x[0]:.3f}–{first_x[-1]:.3f} cm⁻¹；"
+            f"不一致文件：{mismatch_path}，{len(mismatch_x)}点，"
+            f"{mismatch_x[0]:.3f}–{mismatch_x[-1]:.3f} cm⁻¹。"
+            "请先在光谱预处理软件中对全部光谱采用同一范围和步长重采样。"
+        )
 
-        step = float(config.get("resample_step", 3.0))
-        if step <= 0:
-            step = float(np.median([np.median(np.diff(x)) for _, _, x, _ in records]))
-        common_min = max(float(x[0]) for _, _, x, _ in records)
-        common_max = min(float(x[-1]) for _, _, x, _ in records)
-        start = np.ceil((common_min - tolerance) / step) * step
-        end = np.floor((common_max + tolerance) / step) * step
-        if end <= start:
-            raise ValueError("各光谱没有足够的共同波数范围，无法自动统一网格")
-        reference_x = np.arange(start, end + step * 0.25, step)
-        if len(reference_x) < int(config["min_points"]):
-            raise ValueError("统一后的共同波数点过少，请检查光谱范围或重采样步长")
-        aligned_records = [
-            (sample_id, np.interp(reference_x, x, y))
-            for sample_id, _, x, y in records
-        ]
-        grid_aligned = True
+    reference_x = first_x
+    aligned_records = [(sample_id, y) for sample_id, _, _, y in records]
 
     grouped: dict[str, list[np.ndarray]] = defaultdict(list)
     for sample_id, y in aligned_records:
@@ -221,6 +224,7 @@ def load_samples(config: dict) -> dict:
     labels = np.asarray([metadata[key][0] for key in sample_ids], dtype=int)
     class_names = [metadata[key][1] for key in sample_ids]
     folders = [metadata[key][2] for key in sample_ids]
+    batch_ids = [metadata[key][3] for key in sample_ids]
     spectra_counts = [len(grouped[key]) for key in sample_ids]
 
     counts = np.bincount(labels, minlength=2)
@@ -233,10 +237,12 @@ def load_samples(config: dict) -> dict:
         "sample_ids": sample_ids,
         "class_names": class_names,
         "folders": folders,
+        "batch_ids": batch_ids,
         "spectra_counts": spectra_counts,
+        "spectrum_manifest": spectrum_manifest,
         "grid_info": {
             "original_grid_count": len(grid_signatures),
-            "auto_aligned": grid_aligned,
+            "validated_equal": True,
             "points": int(len(reference_x)),
             "start": float(reference_x[0]),
             "end": float(reference_x[-1]),
@@ -348,22 +354,55 @@ def save_predictions(data: dict, scores: np.ndarray, config: dict, output_dir: P
     path = output_dir / "predictions.csv"
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=[
-            "sample_id", "folder", "spectra_count", "true_class",
+            "sample_id", "batch_id", "folder", "spectra_count", "true_class",
             "decision_score_positive", "predicted_class", "correct",
         ])
         writer.writeheader()
-        for sample_id, folder, count, true_code, score, pred_code in zip(
-            data["sample_ids"], data["folders"], data["spectra_counts"],
+        for sample_id, batch_id, folder, count, true_code, score, pred_code in zip(
+            data["sample_ids"], data["batch_ids"], data["folders"], data["spectra_counts"],
             data["labels"], scores, predicted,
         ):
             writer.writerow({
                 "sample_id": sample_id,
+                "batch_id": batch_id,
                 "folder": folder,
                 "spectra_count": count,
                 "true_class": names[int(true_code)],
                 "decision_score_positive": float(score),
                 "predicted_class": names[int(pred_code)],
                 "correct": bool(true_code == pred_code),
+            })
+
+
+def create_analysis_run(output_root: Path) -> tuple[str, Path]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"analysis_run_{timestamp}"
+    output_dir = output_root / run_id
+    suffix = 1
+    while output_dir.exists():
+        run_id = f"analysis_run_{timestamp}_{suffix:02d}"
+        output_dir = output_root / run_id
+        suffix += 1
+    output_dir.mkdir(parents=True)
+    return run_id, output_dir
+
+
+def save_run_manifest(data: dict, run_id: str, output_dir: Path) -> None:
+    fields = [
+        "run_id", "upstream_run_id", "stage", "source_root", "source_path",
+        "relative_path", "batch_id", "sample_id", "sample_folder",
+        "class_code", "class_name", "status",
+    ]
+    upstream_run_id = Path(data["spectrum_manifest"][0]["source_root"]).name if data["spectrum_manifest"] else ""
+    with (output_dir / "run_manifest.csv").open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for row in data["spectrum_manifest"]:
+            writer.writerow({
+                "run_id": run_id,
+                "upstream_run_id": upstream_run_id,
+                **row,
             })
 
 
@@ -392,16 +431,18 @@ def fit_final_model(data: dict, config: dict, output_dir: Path) -> dict:
 
 def run_analysis(config: dict) -> dict:
     """运行完整分析，供命令行和简易前端共同调用。"""
-    output_dir = Path(config["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     data = load_samples(config)
     scores, fold_parameters = nested_cross_validation(data, config)
+    # 只有数据读取和交叉验证成功后才创建结果批次，避免失败运行留下空目录。
+    run_id, output_dir = create_analysis_run(Path(config["output_dir"]))
     metrics = save_roc(data["labels"], scores, config, output_dir)
     save_predictions(data, scores, config, output_dir)
+    save_run_manifest(data, run_id, output_dir)
     final_model = fit_final_model(data, config, output_dir)
 
     result = {
+        "run_id": run_id,
+        "output_dir": str(output_dir),
         "independent_samples": int(len(data["labels"])),
         "spectra_total": int(sum(data["spectra_counts"])),
         "wave_number_grid": data["grid_info"],
@@ -412,6 +453,10 @@ def run_analysis(config: dict) -> dict:
     }
     (output_dir / "metrics.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (output_dir / "run_parameters.json").write_text(
+        json.dumps({"run_id": run_id, "stage": "modeling", "config": config}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     return result
 

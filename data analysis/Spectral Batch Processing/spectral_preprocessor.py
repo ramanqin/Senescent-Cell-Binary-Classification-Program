@@ -331,4 +331,13 @@ def find_spectra(root: str | Path, extensions: Iterable[str], recursive: bool = 
     root = Path(root)
     wanted = {e.lower().lstrip(".") for e in extensions}
     iterator = root.rglob("*") if recursive else root.glob("*")
-    return sorted(p for p in iterator if p.is_file() and p.suffix.lower().lstrip(".") in wanted)
+    excluded_directories = {"failed", "result_plot", "__pycache__"}
+    excluded_names = {"run_manifest.csv", "preprocessing_manifest.csv"}
+    return sorted(
+        p for p in iterator
+        if p.is_file()
+        and p.suffix.lower().lstrip(".") in wanted
+        and not any(part.casefold() in excluded_directories for part in p.relative_to(root).parts[:-1])
+        and p.name.casefold() not in excluded_names
+        and not p.name.startswith("处理报告_")
+    )

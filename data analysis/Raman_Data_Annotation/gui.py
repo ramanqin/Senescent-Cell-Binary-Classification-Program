@@ -141,9 +141,9 @@ class RamanAnnotationApp:
 
         sample_frame = ttk.Frame(top)
         sample_frame.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(8, 0))
-        ttk.Label(sample_frame, text="0组（衰老 aging）").pack(side=tk.LEFT)
+        ttk.Label(sample_frame, text="0组（年轻 young）").pack(side=tk.LEFT)
         ttk.Entry(sample_frame, textvariable=self.group0_size_var, width=7).pack(side=tk.LEFT, padx=(5, 14))
-        ttk.Label(sample_frame, text="1组（年轻 young）").pack(side=tk.LEFT)
+        ttk.Label(sample_frame, text="1组（衰老 aging）").pack(side=tk.LEFT)
         ttk.Entry(sample_frame, textvariable=self.group1_size_var, width=7).pack(side=tk.LEFT, padx=(5, 14))
         ttk.Label(sample_frame, text="未知组").pack(side=tk.LEFT)
         ttk.Entry(sample_frame, textvariable=self.unknown_size_var, width=7).pack(side=tk.LEFT, padx=(5, 14))
@@ -322,7 +322,7 @@ class RamanAnnotationApp:
             self.save_path_var.set(selected)
 
     def load_task(self):
-        # 【衰老数据改动】递归导入任意文件夹，分别应用衰老组(0)和年轻组(1)
+        # 递归导入任意文件夹，分别应用年轻组(0)和衰老组(1)
         # 的抽样配额；继续标注时复用已固定的抽样清单。
         try:
             self.state.data_root = resolve_input_folder(self.data_root_var.get())

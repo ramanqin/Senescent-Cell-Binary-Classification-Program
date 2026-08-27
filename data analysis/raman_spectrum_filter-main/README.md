@@ -1,2 +1,15 @@
-# 010_raman_spectrum_filter
-the program can filter raman spectrum by several metric such as peak height, peak width, Signal-Noise Ratio, peak position. It also has a gui, so you may use it esaily.
+# 拉曼光谱自动清洗
+
+程序按指纹区、静默区和C-H区的SNR、标准差及可选峰形条件筛选双列TXT光谱。
+
+每次运行都会在用户选择的输出目录下新建：
+
+```text
+cleaning_run_年月日_时分秒/
+├─ passed/                 清洗通过，下一步只选择这个目录
+├─ failed/                 未通过或读取错误
+├─ run_manifest.csv        每条光谱的指标、结论和失败原因
+└─ run_parameters.json     本次清洗参数
+```
+
+程序不会删除或覆盖以前的运行结果。预处理时请选择最新运行目录中的`passed`文件夹，不要把`failed`一起导入。

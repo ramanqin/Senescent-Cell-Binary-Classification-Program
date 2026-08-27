@@ -15,8 +15,6 @@
   "inner_splits": 4,
   "random_seed": 42,
   "pca_variance": 0.95,
-  "auto_align_grid": true,
-  "resample_step": 3.0,
   "class_weight": "balanced",
   "n_jobs": -1,
   "c_values": [0.01, 0.1, 1.0, 10.0, 100.0],

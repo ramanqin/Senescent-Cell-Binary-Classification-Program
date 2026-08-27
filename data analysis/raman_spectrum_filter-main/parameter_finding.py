@@ -213,11 +213,13 @@ def Filter_Data_Collect (                                                       
 
     else:
 
-        # 峰数不足三个时，无法形成完整的前三峰特征，统一使用NaN表示缺失。
+        # 峰数不足三个时，无法形成完整的前三峰特征。峰形参数保留为NaN，
+        # 但技术波动指标退回到整个指纹区的标准差，避免“关闭峰形限制”后
+        # 仍因为NaN比较而把光谱误判为不合格。
         finger_peak_1_relative_height = finger_peak_2_relative_height = finger_peak_3_relative_height = \
         finger_peak_1_position = finger_peak_2_position = finger_peak_3_position = \
-        finger_peak_1_width = finger_peak_2_width = finger_peak_3_width = \
-        left_noise_std = right_noise_std = peak_std = np.nan
+        finger_peak_1_width = finger_peak_2_width = finger_peak_3_width = np.nan
+        left_noise_std = right_noise_std = peak_std = finger_std
 
     # 将指纹区的SNR、分区标准差以及三个主峰的特征写入当前文件结果字典。
     present_dict.update({
@@ -295,7 +297,7 @@ def Filter_Data_Collect (                                                       
 
         # 当前判断要求存在指纹峰，下方三个绝对峰高变量只有指纹峰数>=3时才会定义。
       
-        if len(finger_peaks) != 0 :
+        if len(finger_peaks) >= 3:
 
             # 分别计算C-H主峰与三个指纹主峰的绝对突出度之比。
             peak_height_ratio_1 = CH_peak_absolute_height / finger_peak_1_absolute_height
@@ -309,9 +311,11 @@ def Filter_Data_Collect (                                                       
 
     else : 
 
-        # C-H区没有检测到峰时，所有峰特征、分区标准差和峰高比均记为NaN。
-        CH_peak_position = CH_peak_relative_height = CH_peak_width = \
-        left_noise_std = right_noise_std = peak_std = \
+        # C-H区没有检测到峰时，峰形参数和峰高比记为NaN；技术波动指标
+        # 退回到整个C-H区标准差。这样在峰高/峰宽条件关闭时，仍可仅依据
+        # SNR和区间波动进行技术质量筛选。
+        CH_peak_position = CH_peak_relative_height = CH_peak_width = np.nan
+        left_noise_std = right_noise_std = peak_std = CH_std
         peak_height_ratio_1 = peak_height_ratio_2 = peak_height_ratio_3 = np.nan
 
                                                                                            # 将C-H区特征和三项跨波段峰高比合并进当前文件结果字典。

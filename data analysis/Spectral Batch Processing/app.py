@@ -207,7 +207,11 @@ class SpectrumPreprocessorApp(tk.Tk):
         self._entry_row(f, 3, "文件名后缀", self.output_suffix, "可留空")
         self._entry_row(f, 4, "有效数字", self.precision, "位")
         ttk.Separator(f).grid(row=5, column=0, columnspan=3, sticky="ew", pady=8)
-        ttk.Label(f, text="每次运行会在输出文件夹生成：\n• 预处理后的双列光谱\n• 处理报告.csv\n• 本次参数.json", justify="left").grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Label(
+            f,
+            text="每次运行会新建 preprocessing_run_时间 目录：\n• 预处理后的双列光谱\n• run_manifest.csv\n• run_parameters.json",
+            justify="left",
+        ).grid(row=6, column=0, columnspan=3, sticky="w")
 
     def _choose_input(self) -> None:
         path = filedialog.askdirectory(title="选择光谱输入文件夹")
@@ -318,7 +322,16 @@ class SpectrumPreprocessorApp(tk.Tk):
     def _batch_worker(self, input_root: Path, output_root: Path, files: list[Path], cfg: PreprocessConfig, options: dict) -> None:
         output_root.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = output_root / f"preprocessing_run_{timestamp}"
+        suffix = 1
+        while run_dir.exists():
+            run_dir = output_root / f"preprocessing_run_{timestamp}_{suffix:02d}"
+            suffix += 1
+        run_dir.mkdir(parents=True)
+        run_id = run_dir.name
+        upstream_run_id = input_root.parent.name if input_root.name.casefold() == "passed" else ""
         report: list[dict] = []
+        manifest: list[dict] = []
         output_grids: set[tuple[int, float, float, float]] = set()
         success = failed = skipped = 0
         for index, path in enumerate(files, 1):
@@ -329,7 +342,7 @@ class SpectrumPreprocessorApp(tk.Tk):
             try:
                 relative_parent = path.relative_to(input_root).parent if options["preserve"] else Path()
                 ext = ".csv" if options["format"] == "csv" else ".txt"
-                destination = output_root / relative_parent / (path.stem + options["suffix"] + ext)
+                destination = run_dir / relative_parent / (path.stem + options["suffix"] + ext)
                 if destination.exists() and not options["overwrite"]:
                     skipped += 1
                     item.update(status="跳过", output=str(destination), message="输出文件已存在")
@@ -350,18 +363,48 @@ class SpectrumPreprocessorApp(tk.Tk):
                 failed += 1
                 item.update(status="失败", message=str(e))
             report.append(item)
+            normalized_status = {"成功": "success", "失败": "error", "跳过": "skipped"}.get(item["status"], "unknown")
+            manifest.append({
+                "run_id": run_id,
+                "upstream_run_id": upstream_run_id,
+                "stage": "preprocessing",
+                "source_root": str(input_root),
+                "source_path": item["input"],
+                "relative_path": str(path.relative_to(input_root)).replace("\\", "/"),
+                "output_path": item["output"],
+                "status": normalized_status,
+                "error": item["message"] if normalized_status == "error" else "",
+                "input_points": item["input_points"],
+                "output_points": item["output_points"],
+                "x_start": item["x_start"],
+                "x_end": item["x_end"],
+                "median_step": item["median_step"],
+                "cosmic_points": item["cosmic_points"],
+            })
             self.events.put(("progress", index, len(files), path.name, success, failed, skipped))
-        report_path = output_root / f"处理报告_{timestamp}.csv"
+        report_path = run_dir / f"处理报告_{timestamp}.csv"
         with report_path.open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=["input", "status", "output", "input_points", "output_points",
                                                   "x_start", "x_end", "median_step", "cosmic_points", "message"])
             writer.writeheader(); writer.writerows(report)
-        parameter_path = output_root / f"本次参数_{timestamp}.json"
-        parameter_path.write_text(json.dumps({"preprocess": asdict(cfg), "output": options}, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest_path = run_dir / "run_manifest.csv"
+        with manifest_path.open("w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=list(manifest[0]) if manifest else ["run_id", "stage", "status"])
+            writer.writeheader(); writer.writerows(manifest)
+        parameter_path = run_dir / "run_parameters.json"
+        parameter_path.write_text(json.dumps({
+            "run_id": run_id,
+            "upstream_run_id": upstream_run_id,
+            "stage": "preprocessing",
+            "source_root": str(input_root),
+            "output_root": str(run_dir),
+            "preprocess": asdict(cfg),
+            "output": options,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         grid_warning = ""
         if not cfg.resample_enabled and len(output_grids) > 1:
             grid_warning = f"检测到{len(output_grids)}套输出波数网格；建模前建议启用重采样。"
-        self.events.put(("done", success, failed, skipped, len(report), str(report_path),
+        self.events.put(("done", success, failed, skipped, len(report), str(manifest_path),
                          self.stop_event.is_set(), grid_warning))
 
     def _stop(self) -> None:
@@ -380,14 +423,14 @@ class SpectrumPreprocessorApp(tk.Tk):
                     _, success, failed, skipped, processed, report, stopped, grid_warning = event
                     self.run_button.configure(state="normal")
                     self.stop_button.configure(state="disabled")
-                    text = f"{'已停止' if stopped else '处理完成'}：成功{success}，失败{failed}，跳过{skipped}；报告：{report}"
+                    text = f"{'已停止' if stopped else '处理完成'}：成功{success}，失败{failed}，跳过{skipped}；运行清单：{report}"
                     if grid_warning:
                         text += f"；注意：{grid_warning}"
                     self.status.configure(text=text)
                     self._write_log(text)
                     if not stopped:
                         warning_text = f"\n\n注意：{grid_warning}" if grid_warning else ""
-                        messagebox.showinfo("处理完成", f"成功：{success}\n失败：{failed}\n跳过：{skipped}\n\n报告：{report}{warning_text}")
+                        messagebox.showinfo("处理完成", f"成功：{success}\n失败：{failed}\n跳过：{skipped}\n\n运行清单：{report}{warning_text}")
         except queue.Empty:
             pass
         self.after(100, self._poll_events)

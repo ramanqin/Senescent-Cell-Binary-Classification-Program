@@ -36,7 +36,7 @@ class CoreTests(unittest.TestCase):
         records = scan_spectra(self.root, blind_order=False)
         self.assertEqual(len(records), 2)
         labels = {r["class_original"]: r["class_binary"] for r in records}
-        self.assertEqual(labels, {"aging": 0, "young": 1})
+        self.assertEqual(labels, {"aging": 1, "young": 0})
 
     def test_any_folder_is_accepted(self):
         self.assertEqual(resolve_input_folder(self.root / "young"), (self.root / "young").resolve())
@@ -61,7 +61,7 @@ class CoreTests(unittest.TestCase):
 
     def test_separate_group_quotas(self):
         records = []
-        for group, label in (("aging", 0), ("young", 1)):
+        for group, label in (("aging", 1), ("young", 0)):
             for subject in ("1", "2"):
                 for number in range(10):
                     records.append(

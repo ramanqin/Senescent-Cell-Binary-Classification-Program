@@ -28,8 +28,6 @@ class PCA_SVM_App(tk.Tk):
         self.outer_splits = tk.IntVar(value=5)
         self.inner_splits = tk.IntVar(value=4)
         self.pca_variance = tk.DoubleVar(value=0.95)
-        self.auto_align_grid = tk.BooleanVar(value=True)
-        self.resample_step = tk.DoubleVar(value=3.0)
         self.status_text = tk.StringVar(value="请选择预处理光谱根目录。")
         self.result_dir: Path | None = None
 
@@ -71,16 +69,11 @@ class PCA_SVM_App(tk.Tk):
         ttk.Label(options, text="PCA保留方差").grid(row=0, column=4, padx=(20, 5))
         ttk.Entry(options, width=8, textvariable=self.pca_variance).grid(row=0, column=5)
 
-        grid_options = ttk.Frame(root)
-        grid_options.grid(row=7, column=0, columnspan=3, sticky="w", pady=5)
-        ttk.Checkbutton(
-            grid_options,
-            text="波数网格不一致时自动统一",
-            variable=self.auto_align_grid,
-        ).pack(side="left")
-        ttk.Label(grid_options, text="公共网格步长").pack(side="left", padx=(18, 5))
-        ttk.Entry(grid_options, width=7, textvariable=self.resample_step).pack(side="left")
-        ttk.Label(grid_options, text="cm⁻¹").pack(side="left", padx=4)
+        ttk.Label(
+            root,
+            text="本程序只校验波数网格；网格不一致时请先返回预处理软件统一重采样。",
+            foreground="#8A4B08",
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=5)
 
         ttk.Label(
             root,
@@ -119,10 +112,6 @@ class PCA_SVM_App(tk.Tk):
         variance = float(self.pca_variance.get())
         if not 0 < variance < 1:
             raise ValueError("PCA保留方差必须在0与1之间，例如0.95")
-        step = float(self.resample_step.get())
-        if step <= 0:
-            raise ValueError("公共网格步长必须大于0")
-
         self.result_dir = input_path / "result_plot"
         return {
             "input_dir": str(input_path),
@@ -141,8 +130,6 @@ class PCA_SVM_App(tk.Tk):
             "inner_splits": int(self.inner_splits.get()),
             "random_seed": 42,
             "pca_variance": variance,
-            "auto_align_grid": bool(self.auto_align_grid.get()),
-            "resample_step": step,
             "class_weight": "balanced",
             "n_jobs": -1,
             "c_values": [0.01, 0.1, 1.0, 10.0, 100.0],
@@ -176,10 +163,11 @@ class PCA_SVM_App(tk.Tk):
         self.run_button.configure(state="normal")
         self.open_button.configure(state="normal")
         metrics = result["metrics"]
+        self.result_dir = Path(result["output_dir"])
         grid = result["wave_number_grid"]
         grid_text = (
-            f"；已自动统一为{grid['start']:.1f}–{grid['end']:.1f} cm⁻¹、步长{grid['median_step']:.2f}"
-            if grid["auto_aligned"] else "；波数网格原本一致"
+            f"；网格校验通过：{grid['points']}点，"
+            f"{grid['start']:.1f}–{grid['end']:.1f} cm⁻¹，步长{grid['median_step']:.2f}"
         )
         self.status_text.set(
             f"完成：AUC={metrics['roc_auc']:.3f}，平衡准确率={metrics['balanced_accuracy']:.3f}；"

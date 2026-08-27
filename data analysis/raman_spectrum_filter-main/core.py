@@ -1,232 +1,221 @@
-from parameter_finding import Filter_Data_Collect                       #提取单个拉曼光谱的全部筛选特征
-import pandas as pd                                                     #读取两列、制表符分隔的TXT光谱
-from parameter_finding import Index_Comparison                          #把Raman_Shift范围转换为DataFrame行索引
-import traceback                                                        #将异常的完整调用栈转换为日志文本
-import shutil                                                           #复制文件，并尽量保留时间戳等文件元数据
-from pathlib import Path                                                #路径标准化、递归搜索和目录创建
+from __future__ import annotations
+
+import json
+import shutil
+import traceback
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+from parameter_finding import Filter_Data_Collect, Index_Comparison
+
+
+def _passes_minimum(value, minimum):
+    """下限<=0表示关闭该条件；启用时缺失值一律不通过。"""
+    return minimum <= 0 or (pd.notna(value) and value >= minimum)
+
+
+def _passes_maximum(value, maximum):
+    """峰宽上限<=0或旧版哨兵值10000表示关闭；启用时缺失值不通过。"""
+    return maximum <= 0 or maximum >= 10000 or (pd.notna(value) and value <= maximum)
+
 
 def validate_paths(input_path, output_path):
-
-    # 在读取或删除文件之前验证目录关系，防止输出清理误伤输入数据。
+    """确保输入、输出独立，避免递归扫描到自身结果。"""
     if not str(input_path).strip():
         raise ValueError("输入文件夹为空")
-
     if not str(output_path).strip():
         raise ValueError("输出文件夹为空")
 
     input_path = Path(input_path).resolve()
-    output_path = Path(output_path).resolve()   #这两句是将用户传入传出的路径标准化为绝对，并重新赋值
-                                                                                                     #这整个函数在做路径的验证，确保输入输出是合法的
-    if not input_path.exists():                                        #输入目录必须已经存在
+    output_path = Path(output_path).resolve()
+    if not input_path.exists():
         raise ValueError("输入文件夹不存在")
-
-    if not input_path.is_dir():                                        #拒绝把普通文件当作输入目录
+    if not input_path.is_dir():
         raise ValueError("输入路径不是文件夹")
-
-    if input_path == output_path:                                      #输入输出相同会导致后续删除源TXT
+    if input_path == output_path:
         raise ValueError("输出文件夹不能和输入文件夹相同")
-
-    # 禁止互为父子目录：避免输入递归扫描到旧输出，也避免清理输出时覆盖输入树。
     if output_path in input_path.parents or input_path in output_path.parents:
         raise ValueError("输入文件夹和输出文件夹不能互为父子目录")
 
-def Back_Filter_Excute( params , log_function , progress_function):                                 #定义了一个名为Back_Filter_Excute的函数，接受三个参数：params、log_function和progress_function。
 
-    Input_Folder_Path = Path (params.Input_Folder_Path)                                             #导入文件路径设置
-    Output_Folder_Path = Path (params.Output_Folder_Path)                                           #导出文件路径设置
-    validate_paths (Input_Folder_Path , Output_Folder_Path )                                        #验证路径
-
-    Input_Txt_Files_Collection_List = list ( Input_Folder_Path.rglob ( '*.txt' ))                   #使用 pathlib 模块，从 Input_Folder_Path 指定的文件夹开始，递归地（包括所有子文件夹） 查找所有 .txt 文件，并把结果收集成一个列表保存起来。
-
-    if not Input_Txt_Files_Collection_List:
-
-        log_function("\n输入文件夹中没有找到 txt 文件。\n")                                            #没有则返回
-        return
-    
-    # 后续会针对每个文件单独完成Raman_Shift到行索引的换算。
-
-    # -------------------- 结果容器与计数器初始化 --------------------
-
-    Output_Txt_Files_Path_Collection = []                                                            #为输出值预留空间
-    Failed_Txt_Files_Path_Collection = []                                                            #为失败的预留空间
-
-    passed_file_count = 0                                                                            #通过检测的文件数
-    processed_file_count = 0                                                                         #已处理的文件数
-    total_file_count = len ( Input_Txt_Files_Collection_List )                                       #待处理的文件总数
-
-    passed_result_finger = 0                                                                         #通过检测的指纹区文件数
-    passed_result_silence = 0                                                                        #通过检测的静默区文件数
-    passed_result_ch = 0                                                                             #通过检测的C-H区文件数
-    passed_result_ratio = 0                                                                          #通过检测的峰高比文件数
-    
+def _create_run_directory(output_root):
+    """为每次清洗建立独立目录，绝不覆盖或删除以往结果。"""
+    output_root = Path(output_root).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = output_root / f"cleaning_run_{timestamp}"
+    suffix = 1
+    while candidate.exists():
+        candidate = output_root / f"cleaning_run_{timestamp}_{suffix:02d}"
+        suffix += 1
+    candidate.mkdir(parents=True)
+    return candidate
 
 
-    
+def _evaluate_result(result, params):
+    """逐项返回清洗条件，供最终判断和运行清单记录。"""
+    return {
+        "Finger_SNR": result["Finger_SNR"] >= params.Finger_Min_SNR,
+        "Finger_Peak_STD": result["Finger_Peak_STD"] <= params.Finger_Peak_Max_STD,
+        "Finger_L_Noise_STD": result["Finger_L_Noise_STD"] <= params.Finger_Noise_Max_STD,
+        "Finger_R_Noise_STD": result["Finger_R_Noise_STD"] <= params.Finger_Noise_Max_STD,
+        "Finger_Peak_Height": _passes_minimum(result["Finger_3_Height"], params.Finger_Peak_Min_Height),
+        "Finger_Peak_Min_Width": _passes_minimum(result["Finger_3_Width"], params.Finger_Peak_Min_Length),
+        "Finger_Peak_Max_Width": _passes_maximum(result["Finger_3_Width"], params.Finger_Peak_Max_Length),
+        "Silence_SNR": result["Silence_SNR"] >= params.Silence_Min_SNR,
+        "Silence_STD": result["Silence_STD"] <= params.Silence_Max_STD,
+        "CH_SNR": result["CH_SNR"] >= params.CH_Min_SNR,
+        "CH_Peak_STD": result["CH_Peak_STD"] <= params.CH_Peak_Max_STD,
+        "CH_L_Noise_STD": result["CH_L_Noise_STD"] <= params.CH_Noise_Max_STD,
+        "CH_R_Noise_STD": result["CH_R_Noise_STD"] <= params.CH_Noise_Max_STD,
+        "CH_Peak_Height": _passes_minimum(result["CH_Peak_Height"], params.CH_Peak_Min_Height),
+        "CH_Peak_Width": _passes_minimum(result["CH_Peak_Width"], params.CH_Peak_Min_Length),
+        "Peak_Height_Ratio": _passes_minimum(result["Peak_Height_Ratio_3"], params.Peak_Height_Ratio),
+    }
 
-    for txt_path in Input_Txt_Files_Collection_List:                    #依次处理递归搜索到的每个TXT
 
-        
-        # 第一列指定为Raman_Shift，第二列指定为Raman_Intensity。
-        Current_Df = pd.read_csv  ( 
-                                    txt_path ,  
-                                    sep = '\t' , 
-                                    header= None ,
-                                    encoding= "utf-8" ,
-                                    names = ["Raman_Shift" , 'Raman_Intensity']
-                                    )
-        
-        # Raman_Shift区间转换为当前DataFrame的行索引；要求位移列按升序排列。
+def Back_Filter_Excute(params, log_function, progress_function):
+    """执行一次不可覆盖、可追溯的批量清洗。"""
+    input_root = Path(params.Input_Folder_Path).resolve()
+    output_root = Path(params.Output_Folder_Path).resolve()
+    validate_paths(input_root, output_root)
 
-        # 三个波段分别换算，可以兼容不同文件的采样点位置不完全一致。
-        Finger_Start_Index , Finger_End_Index = Index_Comparison ( Current_Df ,  params.Finger_Start , params.Finger_End)
-        Silence_Start_Index , Silence_End_Index = Index_Comparison ( Current_Df ,  params.Silence_Start , params.Silence_End )
-        CH_Start_Index , CH_End_Index = Index_Comparison ( Current_Df ,  params.CH_Start , params.CH_End )
+    input_files = sorted(input_root.rglob("*.txt"))
+    if not input_files:
+        log_function("\n输入文件夹中没有找到 txt 文件。\n")
+        return None
 
-       
+    run_dir = _create_run_directory(output_root)
+    passed_dir = run_dir / "passed"
+    failed_dir = run_dir / "failed"
+    run_id = run_dir.name
+    log_function(f"\n本次结果目录：{run_dir}\n")
+
+    passed_files = []
+    failed_files = []
+    records = []
+    counters = {"finger": 0, "silence": 0, "ch": 0, "ratio": 0}
+
+    for processed_count, txt_path in enumerate(input_files, start=1):
+        relative_path = txt_path.relative_to(input_root)
+        record = {
+            "run_id": run_id,
+            "stage": "cleaning",
+            "source_root": str(input_root),
+            "source_path": str(txt_path.resolve()),
+            "relative_path": relative_path.as_posix(),
+            "output_path": "",
+            "status": "error",
+            "failed_rules": "",
+            "error": "",
+        }
         try:
+            current_df = pd.read_csv(
+                txt_path,
+                sep="\t",
+                header=None,
+                encoding="utf-8",
+                names=["Raman_Shift", "Raman_Intensity"],
+            )
+            finger = Index_Comparison(current_df, params.Finger_Start, params.Finger_End)
+            silence = Index_Comparison(current_df, params.Silence_Start, params.Silence_End)
+            ch = Index_Comparison(current_df, params.CH_Start, params.CH_End)
+            result = Filter_Data_Collect(params, txt_path, *finger, *silence, *ch)
+            checks = _evaluate_result(result, params)
 
-            # 计算当前文件的SNR、峰高、峰宽、分区标准差和跨波段峰高比。
-            Result_Dict = Filter_Data_Collect ( 
-                                                params ,
-                                                txt_path , 
-                                                Finger_Start_Index , 
-                                                Finger_End_Index , 
-                                                Silence_Start_Index , 
-                                                Silence_End_Index , 
-                                                CH_Start_Index , 
-                                                CH_End_Index , 
-                                                )
-            processed_file_count += 1                               #仅特征提取成功的文件计入已处理数
+            finger_pass = all(checks[name] for name in checks if name.startswith("Finger_"))
+            silence_pass = checks["Silence_SNR"] and checks["Silence_STD"]
+            ch_pass = all(checks[name] for name in checks if name.startswith("CH_"))
+            ratio_pass = checks["Peak_Height_Ratio"]
+            passed = finger_pass and silence_pass and ch_pass and ratio_pass
 
-        except Exception:   
-            log_function (f"\n文件处理失败，已跳过：{txt_path}\n")   #向GUI日志报告失败文件
-            log_function (traceback.format_exc())                    #记录具体异常类型、位置和调用栈
-            continue                                                 #异常文件不会进入通过列表或failed列表
+            counters["finger"] += int(finger_pass)
+            counters["silence"] += int(silence_pass)
+            counters["ch"] += int(ch_pass)
+            counters["ratio"] += int(ratio_pass)
 
-        
-        filter_result_finger = ( 
-                            Result_Dict['Finger_SNR'] >= params.Finger_Min_SNR and                      #信噪比达到下限
-                            Result_Dict['Finger_Peak_STD'] <= params.Finger_Peak_Max_STD and            #峰区标准差不超过上限
-                            Result_Dict['Finger_L_Noise_STD'] <= params.Finger_Noise_Max_STD and        #左侧非峰区标准差不超过上限
-                            Result_Dict['Finger_R_Noise_STD'] <= params.Finger_Noise_Max_STD and        #右侧非峰区标准差不超过上限
-                            Result_Dict['Finger_3_Height'] >= params.Finger_Peak_Min_Height and          #最大突出峰相对高度达到下限
-                            params.Finger_Peak_Max_Length >= Result_Dict['Finger_3_Width'] >= params.Finger_Peak_Min_Length  #峰宽位于上下限之间
-                           )
-        
-       
-        # if not filter_result_finger:
-        #     log_function(f"\nR1未通过：{txt_path.name}\n")
-        #     log_function(f"Finger_SNR = {Result_Dict['Finger_SNR']}, 阈值 >= {params.Finger_Min_SNR}\n")
-        #     log_function(f"Finger_Peak_STD = {Result_Dict['Finger_Peak_STD']}, 阈值 <= {params.Finger_Peak_Max_STD}\n")
-        #     log_function(f"Finger_L_Noise_STD = {Result_Dict['Finger_L_Noise_STD']}, 阈值 <= {params.Finger_Noise_Max_STD}\n")
-        #     log_function(f"Finger_R_Noise_STD = {Result_Dict['Finger_R_Noise_STD']}, 阈值 <= {params.Finger_Noise_Max_STD}\n")
-        #     log_function(f"Finger_3_Height = {Result_Dict['Finger_3_Height']}, 阈值 >= {params.Finger_Peak_Min_Height}\n")
-        #     log_function(f"Finger_3_Width = {Result_Dict['Finger_3_Width']}, 阈值范围 {params.Finger_Peak_Min_Length} - {params.Finger_Peak_Max_Length}\n")
+            record.update(result)
+            record.update({f"check_{name}": bool(value) for name, value in checks.items()})
+            record.update(
+                {
+                    "status": "pass" if passed else "fail",
+                    "failed_rules": ";".join(name for name, value in checks.items() if not value),
+                    "pass_finger": finger_pass,
+                    "pass_silence": silence_pass,
+                    "pass_ch": ch_pass,
+                    "pass_ratio": ratio_pass,
+                }
+            )
+            (passed_files if passed else failed_files).append(txt_path)
+        except Exception as exc:
+            failed_files.append(txt_path)
+            record.update(
+                {
+                    "status": "error",
+                    "failed_rules": "processing_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            log_function(f"\n文件处理失败，已归入failed：{txt_path}\n")
+            log_function(traceback.format_exc())
+        records.append(record)
 
-        # 静默区只检查信噪比下限和整体标准差上限。
-        filter_result_silence = (
-                            Result_Dict['Silence_SNR'] >= params.Silence_Min_SNR and             #静默区SNR达到下限
-                            Result_Dict['Silence_STD'] <= params.Silence_Max_STD                  #静默区波动不超过上限
-                            )
-        
-        # C-H区的SNR、峰区/非峰区标准差、主峰相对高度和主峰宽度必须同时合格。
-        filter_result_ch = (
-                            Result_Dict['CH_SNR'] >= params.CH_Min_SNR and                          #C-H区SNR达到下限
-                            Result_Dict['CH_Peak_STD'] <= params.CH_Peak_Max_STD and                #C-H峰区标准差不超过上限
-                            Result_Dict['CH_L_Noise_STD'] <= params.CH_Noise_Max_STD and            #左侧非峰区标准差不超过上限
-                            Result_Dict['CH_R_Noise_STD'] <= params.CH_Noise_Max_STD and            #右侧非峰区标准差不超过上限
-                            Result_Dict['CH_Peak_Height'] >= params.CH_Peak_Min_Height and           #C-H主峰相对高度达到下限
-                            Result_Dict['CH_Peak_Width'] >= params.CH_Peak_Min_Length               #C-H主峰宽度达到下限（无最大值限制）
-                           )
-        
-        # C-H主峰与指纹区最大峰的绝对突出度比值达到下限。
-        filter_result_ratio = Result_Dict['Peak_Height_Ratio_3'] >= params.Peak_Height_Ratio
-
-        # 分别统计四组独立条件的通过数量，用于任务结束时计算单项通过率。
-        if filter_result_finger:
-            passed_result_finger += 1                                #指纹区通过计数
-        if filter_result_silence:
-            passed_result_silence += 1                               #静默区通过计数
-        if filter_result_ch:
-            passed_result_ch += 1                                    #C-H区通过计数
-        if filter_result_ratio:
-            passed_result_ratio += 1                                 #峰高比通过计数
-
-        # 每成功处理10个文件更新一次进度；最后一个成功文件也会触发更新。
-       
-        if processed_file_count % 10 == 0 or processed_file_count == total_file_count:
-
-            # progress_function由GUI传入；后台线程只写队列，不直接操作Tk控件。
+        if processed_count % 10 == 0 or processed_count == len(input_files):
             progress_function(
-                            '进度：{}/{}，{:.2%}      '.format(
-                            processed_file_count , 
-                            total_file_count, 
-                            processed_file_count/total_file_count )
-                            )
-            
-        # 最终通过要求4四组条件全部为True。
-        if filter_result_finger and filter_result_silence and filter_result_ch and filter_result_ratio:
+                "进度：{}/{}，{:.2%}      ".format(
+                    processed_count, len(input_files), processed_count / len(input_files)
+                )
+            )
 
-            passed_file_count += 1                                  #最终通过文件数量加一
-            Output_Txt_Files_Path_Collection.append (txt_path)       #记录源路径，循环结束后统一复制
+    record_by_source = {record["source_path"]: record for record in records}
+    for status_dir, paths in ((passed_dir, passed_files), (failed_dir, failed_files)):
+        for source_path in paths:
+            relative_path = source_path.relative_to(input_root)
+            export_path = status_dir / relative_path
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, export_path)
+            record_by_source[str(source_path.resolve())]["output_path"] = str(export_path.resolve())
 
-        else:
-
-            Failed_Txt_Files_Path_Collection.append (txt_path)       #任一条件失败就加入未通过列表
-
-    
-    # 在复制本轮结果前，递归删除输出目录下全部旧TXT，包括旧failed目录中的TXT。
-    # unlink是直接删除而非移动到回收站；validate_paths用于确保这里不会清理输入目录。
-    delete_file_type = '*.txt'                                      #限定只清理TXT，其他类型文件保留
-    for file_need_delete in Output_Folder_Path.rglob( delete_file_type ):
-        if file_need_delete.is_file():                              #防止对非普通文件调用unlink
-            file_need_delete.unlink()                               #删除上一轮产生的TXT结果
-
-    # -------------------- 复制通过文件 --------------------
-    for passed_txt_path in Output_Txt_Files_Path_Collection:        #逐个复制最终通过筛选的光谱
-
-        relative_path = passed_txt_path.relative_to(Input_Folder_Path)  #取得文件相对于输入根目录的层级
-        export_path = Output_Folder_Path / relative_path                #在输出根目录下复现原目录结构
-        export_path.parent.mkdir(parents=True, exist_ok=True)            #递归创建目标父目录；已存在时不报错
-
-        shutil.copy2 ( passed_txt_path , export_path )                   #复制内容并尽量保留时间戳等元数据
-
-    # 未通过文件统一放入输出根目录的failed子目录。
-    Failed_Folder_Path = Output_Folder_Path / 'failed'
-
-    # -------------------- 复制未通过文件 --------------------
-    for failed_txt_path in Failed_Txt_Files_Path_Collection:
-
-        relative_path = failed_txt_path.relative_to(Input_Folder_Path)  #保留相对于输入目录的原始层级
-        export_path = Failed_Folder_Path / relative_path                #把层级放到failed目录之下
-        export_path.parent.mkdir(parents=True, exist_ok=True)            #确保目标目录存在
-
-        shutil.copy2 ( failed_txt_path , export_path )                   #复制未通过光谱并保留元数据
-
-    # -------------------- 输出总体统计日志 --------------------
-    # 报告输入TXT总数、最终通过数和总体通过率；异常跳过文件仍包含在总数分母中。
-    log_function(
-            
-        '\n原有{}个样本；现有{}个文件达到了标准；通过率{:.2%}'.format(
-                                                                        
-        len(Input_Txt_Files_Collection_List) ,                         #输入目录中找到的全部TXT数量
-        passed_file_count ,                                            #同时通过四组条件的文件数
-        passed_file_count / len (Input_Txt_Files_Collection_List)      #最终总通过率
-        
-    ))
-
-   
-    log_function (
-
-        '\n通过率：\n\
-        指纹区R1通过率{:.2%}；\n\
-        静默区R2通过率{:.2%}；\n\
-        C-H峰R3通过率{:.2%}；\n\
-        峰比R4通过率{:.2%}'.format(
-                                passed_result_finger/total_file_count ,  #指纹区单项通过率
-                                passed_result_silence/total_file_count , #静默区单项通过率
-                                passed_result_ch/total_file_count ,      #C-H区单项通过率
-                                passed_result_ratio/total_file_count     #峰高比单项通过率
-                            )
-
+    manifest_path = run_dir / "run_manifest.csv"
+    pd.DataFrame(records).to_csv(manifest_path, index=False, encoding="utf-8-sig")
+    parameters = asdict(params) if hasattr(params, "__dataclass_fields__") else vars(params)
+    (run_dir / "run_parameters.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "stage": "cleaning",
+                "source_root": str(input_root),
+                "output_root": str(run_dir),
+                "parameters": parameters,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
+
+    total = len(input_files)
+    passed_count = len(passed_files)
+    log_function(
+        "\n原有{}个样本；现有{}个文件达到了标准；通过率{:.2%}".format(
+            total, passed_count, passed_count / total
+        )
+    )
+    log_function(
+        "\n通过率：\n"
+        "指纹区R1通过率{:.2%}；\n"
+        "静默区R2通过率{:.2%}；\n"
+        "C-H峰R3通过率{:.2%}；\n"
+        "峰比R4通过率{:.2%}".format(
+            counters["finger"] / total,
+            counters["silence"] / total,
+            counters["ch"] / total,
+            counters["ratio"] / total,
+        )
+    )
+    log_function(f"\n运行清单：{manifest_path}\n")
+    log_function(f"通过光谱目录：{passed_dir}\n")
+    return run_dir

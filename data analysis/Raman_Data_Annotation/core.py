@@ -15,8 +15,9 @@ from scipy.signal import savgol_filter
 
 TOOL_VERSION = "2.3.0-qc-assistant"
 
-CLASS_MAP = {"aging": 0, "young": 1}
-CLASS_ALIASES = {"aging": "aging", "young": "young", "0": "aging", "1": "young"}
+# 全项目统一：年轻为阴性类0，衰老为阳性类1。
+CLASS_MAP = {"young": 0, "aging": 1}
+CLASS_ALIASES = {"aging": "aging", "young": "young", "0": "young", "1": "aging"}
 QC_STATUSES = {"pass", "review", "fail"}
 
 ISSUE_FIELDS = [
@@ -219,7 +220,7 @@ def sample_records_by_group(
     seed: int = 20260813,
     strategy: str = "balanced",
 ) -> list[dict]:
-    """按独立配额抽取衰老组(0)、年轻组(1)和未知组光谱。"""
+    """按独立配额抽取年轻组(0)、衰老组(1)和未知组光谱。"""
     rng = random.Random(seed)
     pools = {
         0: [record for record in records if record.get("class_binary") == 0],
@@ -231,7 +232,7 @@ def sample_records_by_group(
     selected.extend(_sample_one_group(pools[1], group1_size, rng, strategy))
     selected.extend(_sample_one_group(pools["unknown"], unknown_size, rng, strategy))
     if not selected:
-        available = {"0(aging)": len(pools[0]), "1(young)": len(pools[1]), "unknown": len(pools["unknown"])}
+        available = {"0(young)": len(pools[0]), "1(aging)": len(pools[1]), "unknown": len(pools["unknown"])}
         raise ValueError(f"抽样结果为空。请检查各组配额；当前可用数量：{available}")
 
     order_rng = random.Random(seed ^ 0x5A17)
@@ -467,11 +468,11 @@ def load_sample_manifest(annotation_csv: str | Path) -> list[dict]:
     missing = [column for column in SAMPLE_MANIFEST_COLUMNS if column not in frame.columns]
     if missing:
         raise ValueError(f"抽样清单缺少字段：{', '.join(missing)}")
-    aging_wrong = (frame["class_original"].astype(str).str.lower() == "aging") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 0)
-    young_wrong = (frame["class_original"].astype(str).str.lower() == "young") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 1)
+    aging_wrong = (frame["class_original"].astype(str).str.lower() == "aging") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 1)
+    young_wrong = (frame["class_original"].astype(str).str.lower() == "young") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 0)
     if aging_wrong.any() or young_wrong.any():
         raise ValueError(
-            "该抽样清单使用旧的相反编码。当前统一规定为0=aging（衰老）、1=young（年轻）。"
+            "该抽样清单使用旧的相反编码。当前统一规定为0=young（年轻）、1=aging（衰老）。"
             "请新建一个标注CSV文件名重新抽样，避免混用标签。"
         )
     frame = frame.sort_values("sample_order", kind="stable")
@@ -494,11 +495,11 @@ def load_annotations(csv_path: str | Path) -> pd.DataFrame:
                 frame[column] = np.nan
             else:
                 frame[column] = "" if column in {"other_mark", "qc_status"} else 0
-    aging_wrong = (frame["class_original"].astype(str).str.lower() == "aging") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 0)
-    young_wrong = (frame["class_original"].astype(str).str.lower() == "young") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 1)
+    aging_wrong = (frame["class_original"].astype(str).str.lower() == "aging") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 1)
+    young_wrong = (frame["class_original"].astype(str).str.lower() == "young") & (pd.to_numeric(frame["class_binary"], errors="coerce") != 0)
     if aging_wrong.any() or young_wrong.any():
         raise ValueError(
-            "该标注CSV使用旧的相反编码。当前统一规定为0=aging（衰老）、1=young（年轻）。"
+            "该标注CSV使用旧的相反编码。当前统一规定为0=young（年轻）、1=aging（衰老）。"
             "请改用新的标注CSV文件名。"
         )
     return frame[OUTPUT_COLUMNS].copy()

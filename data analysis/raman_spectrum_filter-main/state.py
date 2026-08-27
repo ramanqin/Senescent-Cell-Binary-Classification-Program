@@ -17,7 +17,8 @@ class Parameter_State:                              #定义一个类
     Finger_Peak_Max_STD : float = 500
     Finger_Min_SNR : float = 35
     Finger_Noise_Max_STD : float = 500
-    Finger_Peak_Max_Length : float = 10000
+    # 0表示不启用指纹峰宽上限；只有用户填写正数时才参与判断。
+    Finger_Peak_Max_Length : float = 0
                                                                            #对应的参数进行初始化，设置默认值，为后续的参数传入做准备
     Silence_Min_SNR : float = 35
     Silence_Max_STD : float = 50

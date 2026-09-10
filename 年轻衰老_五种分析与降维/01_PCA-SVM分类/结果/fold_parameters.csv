@@ -1,0 +1,7 @@
+fold,train_subjects,test_subjects,inner_best_balanced_accuracy,kernel,C,outer_balanced_accuracy
+1,78,20,1.0,linear,0.01,1.0
+2,78,20,1.0,linear,0.01,1.0
+3,78,20,1.0,linear,0.01,1.0
+4,79,19,1.0,linear,0.01,1.0
+5,79,19,1.0,linear,0.01,1.0
+

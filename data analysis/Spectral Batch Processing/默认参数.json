@@ -8,7 +8,7 @@
     "cosmic_max_width": 3,
     "cosmic_passes": 2,
     "resample_enabled": true,
-    "resample_step": 3.0,
+    "resample_step": 1.0,
     "baseline_method": "ALS",
     "baseline_lambda": 100000.0,
     "baseline_p": 0.01,

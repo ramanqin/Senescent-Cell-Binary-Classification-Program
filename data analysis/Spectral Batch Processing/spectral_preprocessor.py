@@ -28,7 +28,7 @@ class PreprocessConfig:
 
     # 重采样，每个保留波段分别插值，避免跨越静默区
     resample_enabled: bool = True
-    resample_step: float = 3.0
+    resample_step: float = 1.0
 
     # 基线
     baseline_method: str = "ALS"  # 无、ALS、airPLS、多项式
@@ -49,7 +49,14 @@ class PreprocessConfig:
     # 数据质量
     min_points: int = 20
 
+    def __post_init__(self) -> None:
+        # 固定版：兼容旧参数文件，但始终使用开启的1 cm⁻¹重采样。
+        self.resample_enabled = True
+        self.resample_step = 1.0
+
     def validate(self) -> None:
+        if self.resample_enabled is not True or self.resample_step != 1.0:
+            raise ValueError("步长1固定版必须开启重采样，步长必须为1 cm⁻¹")
         if self.crop_enabled:
             parse_ranges(self.ranges)
         if self.cosmic_window < 3 or self.cosmic_window % 2 == 0:
@@ -77,6 +84,7 @@ class PreprocessConfig:
                 raise ValueError("SG导数阶数必须在0与多项式阶数之间")
 
     def save(self, path: str | Path) -> None:
+        self.validate()
         Path(path).write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8")
 
     @classmethod

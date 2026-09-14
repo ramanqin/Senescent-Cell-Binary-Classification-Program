@@ -31,7 +31,7 @@ from spectral_preprocessor import (
 class SpectrumPreprocessorApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("拉曼光谱批量预处理软件")
+        self.title("拉曼光谱批量预处理软件（步长1固定版）")
         self.geometry("1320x820")
         self.minsize(1120, 700)
         self.stop_event = threading.Event()
@@ -159,8 +159,10 @@ class SpectrumPreprocessorApp(tk.Tk):
         ttk.Separator(f).grid(row=2, column=0, columnspan=3, sticky="ew", pady=8)
         ttk.Checkbutton(f, text="截取波数范围", variable=self.vars["crop_enabled"]).grid(row=3, column=0, columnspan=3, sticky="w")
         self._entry_row(f, 4, "保留波段", self.vars["ranges"], "例：600-1800,2700-3600")
-        ttk.Checkbutton(f, text="按固定步长重采样", variable=self.vars["resample_enabled"]).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 2))
-        self._entry_row(f, 6, "重采样步长", self.vars["resample_step"], "cm⁻¹")
+        ttk.Checkbutton(f, text="按固定步长重采样（已锁定开启）", variable=self.vars["resample_enabled"], state="disabled").grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 2))
+        ttk.Label(f, text="重采样步长（固定）").grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Entry(f, textvariable=self.vars["resample_step"], width=18, state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(f, text="cm⁻¹").grid(row=6, column=2, sticky="w")
         self._entry_row(f, 7, "最低有效点数", self.vars["min_points"], "点")
         ttk.Label(f, text="多波段会分别插值，不会跨越1800–2700 cm⁻¹等空白区。", wraplength=390).grid(row=8, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
@@ -226,6 +228,8 @@ class SpectrumPreprocessorApp(tk.Tk):
             self.output_dir.set(path)
 
     def _config(self) -> PreprocessConfig:
+        self.vars["resample_enabled"].set(True)
+        self.vars["resample_step"].set(1.0)
         values = {key: var.get() for key, var in self.vars.items()}
         cfg = PreprocessConfig(**values)
         cfg.validate()
@@ -255,6 +259,7 @@ class SpectrumPreprocessorApp(tk.Tk):
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))
             values = payload.get("preprocess", payload)
+            step_adjusted = values.get("resample_step", 1.0) != 1.0 or values.get("resample_enabled", True) is not True
             cfg = PreprocessConfig(**values)
             cfg.validate()
             for key, value in asdict(cfg).items():
@@ -263,6 +268,9 @@ class SpectrumPreprocessorApp(tk.Tk):
                 if key in payload:
                     variable.set(payload[key])
             self._write_log(f"参数已载入：{path}")
+            if step_adjusted:
+                self._write_log("固定版已将旧参数中的重采样设置改为：开启，步长1 cm⁻¹；其他参数不变。")
+                messagebox.showinfo("固定步长提示", "本版本固定开启重采样，步长为1 cm⁻¹。\n旧文件中的重采样步长和开关已调整，其他参数保持载入值。")
         except Exception as e:
             messagebox.showerror("载入失败", str(e))
 

@@ -19,10 +19,11 @@ from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
     confusion_matrix,
+    f1_score,
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -36,23 +37,42 @@ rcParams["axes.unicode_minus"] = False
 def load_config(path: str | Path) -> dict:
     config_path = Path(path).resolve()
     config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    required = ["input_dir", "output_dir", "negative_class", "positive_class"]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"配置缺少字段：{missing}")
     for key in ("input_dir", "output_dir"):
         value = Path(config[key])
         if not value.is_absolute():
             value = (config_path.parent / value).resolve()
         config[key] = str(value)
+    return normalize_config(config)
 
+
+def normalize_config(config: dict) -> dict:
+    """Validate both CLI and GUI settings; legacy search fields are not used."""
+    config = dict(config)
+    ignored = list(config.get("ignored_legacy_fields", []))
+    if "outer_splits" in config:
+        config.setdefault("cv_splits", config["outer_splits"])
+        config.pop("outer_splits")
+    for key in ("inner_splits", "c_values", "gamma_values", "n_jobs"):
+        if key in config:
+            config.pop(key)
+            if key not in ignored:
+                ignored.append(key)
+    config["ignored_legacy_fields"] = ignored
     defaults = {
         "extensions": ["txt", "csv", "dat"],
         "sample_depth_after_class": 1,
-        "outer_splits": 5,
-        "inner_splits": 4,
+        "cv_splits": 5,
         "random_seed": 42,
         "pca_variance": 0.95,
         "class_weight": "balanced",
-        "n_jobs": -1,
-        "c_values": [0.01, 0.1, 1.0, 10.0, 100.0],
-        "gamma_values": ["scale", 0.01, 0.1, 1.0],
+        "svm_kernel": "linear",
+        "svm_c": 0.01,
+        "svm_gamma": "scale",
+        "parameter_source": "预设固定参数；本轮不搜索超参数",
         "roc_filename": "ROC.png",
         "grid_tolerance": 1e-6,
         "min_points": 20,
@@ -68,6 +88,22 @@ def load_config(path: str | Path) -> dict:
         raise FileNotFoundError(f"输入文件夹不存在：{config['input_dir']}")
     if not 0 < float(config["pca_variance"]) < 1:
         raise ValueError("pca_variance必须在0与1之间，例如0.95")
+    splits = config["cv_splits"]
+    if isinstance(splits, bool) or int(splits) != float(splits) or int(splits) < 2:
+        raise ValueError("cv_splits必须是至少2的整数，默认5折")
+    config["cv_splits"] = int(splits)
+    if config["svm_kernel"] not in ("linear", "rbf"):
+        raise ValueError("svm_kernel仅支持linear或rbf")
+    config["svm_c"] = float(config["svm_c"])
+    if not np.isfinite(config["svm_c"]) or config["svm_c"] <= 0:
+        raise ValueError("固定参数C必须为有限正数")
+    gamma = config["svm_gamma"]
+    if gamma not in ("scale", "auto"):
+        gamma = float(gamma)
+        if not np.isfinite(gamma) or gamma <= 0:
+            raise ValueError("gamma必须为scale、auto或有限正数")
+    config["svm_gamma"] = gamma
+    config["validation_method"] = "StratifiedKFold_fixed_parameters"
     return config
 
 
@@ -251,72 +287,71 @@ def load_samples(config: dict) -> dict:
     }
 
 
-def make_search(config: dict, inner_cv: StratifiedKFold) -> GridSearchCV:
-    pipeline = Pipeline([
+def make_pipeline(config: dict) -> Pipeline:
+    return Pipeline([
         ("pca", PCA(n_components=float(config["pca_variance"]), svd_solver="full")),
         ("scale", StandardScaler()),
-        ("svm", SVC(class_weight=config["class_weight"], cache_size=500)),
+        ("svm", SVC(class_weight=config["class_weight"], cache_size=500,
+                    kernel=config["svm_kernel"], C=config["svm_c"], gamma=config["svm_gamma"])),
     ])
-    grid = [
-        {"svm__kernel": ["linear"], "svm__C": config["c_values"]},
-        {
-            "svm__kernel": ["rbf"],
-            "svm__C": config["c_values"],
-            "svm__gamma": config["gamma_values"],
-        },
-    ]
-    return GridSearchCV(
-        pipeline,
-        param_grid=grid,
-        scoring="balanced_accuracy",
-        cv=inner_cv,
-        n_jobs=int(config["n_jobs"]),
-        refit=True,
-        error_score="raise",
-    )
 
 
-def nested_cross_validation(data: dict, config: dict) -> tuple[np.ndarray, list[dict]]:
+def fixed_parameters(config: dict) -> dict:
+    return {"svm__kernel": config["svm_kernel"], "svm__C": config["svm_c"],
+            "svm__gamma": config["svm_gamma"], "class_weight": config["class_weight"]}
+
+
+def calculate_metrics(y: np.ndarray, predicted: np.ndarray, scores: np.ndarray) -> dict:
+    tn, fp, fn, tp = confusion_matrix(y, predicted, labels=[0, 1]).ravel()
+    return {
+        "roc_auc": float(roc_auc_score(y, scores)),
+        "balanced_accuracy": float(balanced_accuracy_score(y, predicted)),
+        "accuracy": float(accuracy_score(y, predicted)),
+        "f1_positive": float(f1_score(y, predicted, zero_division=0)),
+        "sensitivity_positive": float(tp / (tp + fn)),
+        "specificity_negative": float(tn / (tn + fp)),
+        "TN": int(tn), "FP": int(fp), "FN": int(fn), "TP": int(tp),
+    }
+
+
+def cross_validation(data: dict, config: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     x, y = data["matrix"], data["labels"]
     minority = int(np.bincount(y, minlength=2).min())
-    outer_splits = min(int(config["outer_splits"]), minority)
-    if outer_splits < 2:
-        raise ValueError("独立样本不足，无法进行外层交叉验证")
-    outer = StratifiedKFold(
-        n_splits=outer_splits,
+    splits = int(config["cv_splits"])
+    if minority < splits:
+        raise ValueError(f"每类至少需要{splits}个编号才能进行{splits}折验证；不会自动减少折数")
+    cv = StratifiedKFold(
+        n_splits=splits,
         shuffle=True,
         random_state=int(config["random_seed"]),
     )
     scores = np.full(len(y), np.nan)
-    fold_parameters: list[dict] = []
+    predicted = np.full(len(y), -1, dtype=int)
+    fold_ids = np.full(len(y), -1, dtype=int)
+    fold_results: list[dict] = []
 
-    for fold, (train_index, test_index) in enumerate(outer.split(x, y), start=1):
-        train_y = y[train_index]
-        inner_splits = min(int(config["inner_splits"]), int(np.bincount(train_y).min()))
-        if inner_splits < 2:
-            raise ValueError("外层训练集的少数类别不足，不能进行内层调参")
-        inner = StratifiedKFold(
-            n_splits=inner_splits,
-            shuffle=True,
-            random_state=int(config["random_seed"]) + fold * 101,
-        )
-        search = make_search(config, inner)
-        search.fit(x[train_index], train_y)
-        scores[test_index] = search.best_estimator_.decision_function(x[test_index])
-        fold_parameters.append({
+    for fold, (train_index, test_index) in enumerate(cv.split(x, y), start=1):
+        model = make_pipeline(config)
+        model.fit(x[train_index], y[train_index])
+        scores[test_index] = model.decision_function(x[test_index])
+        predicted[test_index] = model.predict(x[test_index])
+        fold_ids[test_index] = fold
+        fold_results.append({
             "fold": fold,
-            "inner_best_balanced_accuracy": float(search.best_score_),
-            "best_parameters": search.best_params_,
+            "train_subjects": len(train_index), "test_subjects": len(test_index),
+            "test_young": int((y[test_index] == 0).sum()),
+            "test_aging": int((y[test_index] == 1).sum()),
+            "fixed_parameters": fixed_parameters(config),
+            "pca_components": int(model.named_steps["pca"].n_components_),
+            **calculate_metrics(y[test_index], predicted[test_index], scores[test_index]),
         })
-    if np.isnan(scores).any():
-        raise RuntimeError("外层交叉验证未覆盖全部样本")
-    return scores, fold_parameters
+    if np.isnan(scores).any() or (fold_ids < 0).any() or (predicted < 0).any():
+        raise RuntimeError("交叉验证未覆盖全部样本")
+    return scores, predicted, fold_ids, fold_results
 
 
-def save_roc(y: np.ndarray, scores: np.ndarray, config: dict, output_dir: Path) -> dict:
-    predicted = (scores >= 0).astype(int)
+def save_roc(y: np.ndarray, scores: np.ndarray, predicted: np.ndarray, config: dict, output_dir: Path) -> dict:
     auc_value = float(roc_auc_score(y, scores))
-    balanced = float(balanced_accuracy_score(y, predicted))
     fpr, tpr, _ = roc_curve(y, scores)
 
     negative_name = config["negative_class"]["name"]
@@ -326,7 +361,7 @@ def save_roc(y: np.ndarray, scores: np.ndarray, config: dict, output_dir: Path) 
     ax.plot([0, 1], [0, 1], "--", color="0.55", label="随机水平")
     ax.set_xlabel("假阳性率")
     ax.set_ylabel("真阳性率")
-    ax.set_title(f"{negative_name} vs {positive_name} ROC")
+    ax.set_title(f"{negative_name} vs {positive_name}：普通{config['cv_splits']}折ROC（固定参数）")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1.02)
     ax.grid(alpha=0.2)
@@ -335,32 +370,38 @@ def save_roc(y: np.ndarray, scores: np.ndarray, config: dict, output_dir: Path) 
     fig.savefig(roc_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    tn, fp, fn, tp = confusion_matrix(y, predicted, labels=[0, 1]).ravel()
-    return {
-        "roc_auc": auc_value,
-        "balanced_accuracy": balanced,
-        "accuracy": float(accuracy_score(y, predicted)),
-        "TN": int(tn),
-        "FP": int(fp),
-        "FN": int(fn),
-        "TP": int(tp),
-        "roc_file": str(roc_path),
-    }
+    cm = confusion_matrix(y, predicted, labels=[0, 1])
+    fractions = cm / cm.sum(axis=1, keepdims=True)
+    fig, ax = plt.subplots(figsize=(6, 5), constrained_layout=True)
+    ax.imshow(fractions, cmap="Blues", vmin=0, vmax=1)
+    ax.set(xticks=[0, 1], yticks=[0, 1], xticklabels=[negative_name, positive_name],
+           yticklabels=[negative_name, positive_name], xlabel="预测类别", ylabel="真实标签",
+           title=f"PCA-SVM：普通{config['cv_splits']}折折外混淆矩阵")
+    for r in (0, 1):
+        for c in (0, 1):
+            ax.text(c, r, f"{cm[r,c]}\n{fractions[r,c]:.1%}", ha="center", va="center",
+                    fontsize=15, color="white" if fractions[r,c] > .5 else "black")
+    cm_path = output_dir / "混淆矩阵.png"
+    fig.savefig(cm_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return {**calculate_metrics(y, predicted, scores), "roc_file": str(roc_path),
+            "confusion_matrix_file": str(cm_path)}
 
 
-def save_predictions(data: dict, scores: np.ndarray, config: dict, output_dir: Path) -> None:
-    predicted = (scores >= 0).astype(int)
+def save_predictions(data: dict, scores: np.ndarray, predicted: np.ndarray,
+                     fold_ids: np.ndarray, config: dict, output_dir: Path) -> None:
     names = {0: config["negative_class"]["name"], 1: config["positive_class"]["name"]}
     path = output_dir / "predictions.csv"
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=[
             "sample_id", "batch_id", "folder", "spectra_count", "true_class",
             "decision_score_positive", "predicted_class", "correct",
+            "cv_fold", "true_class_code", "predicted_class_code",
         ])
         writer.writeheader()
-        for sample_id, batch_id, folder, count, true_code, score, pred_code in zip(
+        for sample_id, batch_id, folder, count, true_code, score, pred_code, fold in zip(
             data["sample_ids"], data["batch_ids"], data["folders"], data["spectra_counts"],
-            data["labels"], scores, predicted,
+            data["labels"], scores, predicted, fold_ids,
         ):
             writer.writerow({
                 "sample_id": sample_id,
@@ -371,6 +412,8 @@ def save_predictions(data: dict, scores: np.ndarray, config: dict, output_dir: P
                 "decision_score_positive": float(score),
                 "predicted_class": names[int(pred_code)],
                 "correct": bool(true_code == pred_code),
+                "cv_fold": int(fold), "true_class_code": int(true_code),
+                "predicted_class_code": int(pred_code),
             })
 
 
@@ -407,36 +450,39 @@ def save_run_manifest(data: dict, run_id: str, output_dir: Path) -> None:
 
 
 def fit_final_model(data: dict, config: dict, output_dir: Path) -> dict:
-    y = data["labels"]
-    inner_splits = min(int(config["inner_splits"]), int(np.bincount(y).min()))
-    inner = StratifiedKFold(
-        n_splits=inner_splits,
-        shuffle=True,
-        random_state=int(config["random_seed"]) + 2026,
-    )
-    search = make_search(config, inner)
-    search.fit(data["matrix"], y)
+    model = make_pipeline(config)
+    model.fit(data["matrix"], data["labels"])
     joblib.dump({
-        "model": search.best_estimator_,
+        "model": model,
         "wave_numbers": data["x"],
         "negative_class": config["negative_class"]["name"],
         "positive_class": config["positive_class"]["name"],
-        "best_parameters": search.best_params_,
+        "fixed_parameters": fixed_parameters(config),
+        "validation_method": config["validation_method"],
+        "parameter_source": config["parameter_source"],
     }, output_dir / "model.joblib")
     return {
-        "best_parameters": search.best_params_,
-        "inner_selection_score": float(search.best_score_),
+        "fixed_parameters": fixed_parameters(config),
+        "fit_subjects": int(len(data["labels"])),
+        "parameter_search_performed": False,
     }
 
 
 def run_analysis(config: dict) -> dict:
     """运行完整分析，供命令行和简易前端共同调用。"""
+    config = normalize_config(config)
     data = load_samples(config)
-    scores, fold_parameters = nested_cross_validation(data, config)
+    scores, predicted, fold_ids, fold_results = cross_validation(data, config)
     # 只有数据读取和交叉验证成功后才创建结果批次，避免失败运行留下空目录。
     run_id, output_dir = create_analysis_run(Path(config["output_dir"]))
-    metrics = save_roc(data["labels"], scores, config, output_dir)
-    save_predictions(data, scores, config, output_dir)
+    metrics = save_roc(data["labels"], scores, predicted, config, output_dir)
+    save_predictions(data, scores, predicted, fold_ids, config, output_dir)
+    (output_dir / "fold_results.json").write_text(
+        json.dumps(fold_results, ensure_ascii=False, indent=2), encoding="utf-8")
+    with (output_dir / "每折结果.csv").open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(fold_results[0]))
+        writer.writeheader()
+        writer.writerows(fold_results)
     save_run_manifest(data, run_id, output_dir)
     final_model = fit_final_model(data, config, output_dir)
 
@@ -447,9 +493,12 @@ def run_analysis(config: dict) -> dict:
         "spectra_total": int(sum(data["spectra_counts"])),
         "wave_number_grid": data["grid_info"],
         "metrics": metrics,
-        "outer_fold_parameters": fold_parameters,
+        "validation_method": config["validation_method"],
+        "cv_splits": config["cv_splits"],
+        "parameter_source": config["parameter_source"],
+        "fold_results": fold_results,
         "final_model": final_model,
-        "note": "最终模型的内层选择成绩不是外层测试成绩。",
+        "note": "固定参数普通分层交叉验证，无内层搜索；指标来自折外预测。若固定参数曾在同一数据集上选取，结果仍有历史选择影响。",
     }
     (output_dir / "metrics.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"

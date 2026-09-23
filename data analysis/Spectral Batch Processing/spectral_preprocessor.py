@@ -65,8 +65,6 @@ class PreprocessConfig:
             raise ValueError("宇宙射线阈值必须大于0")
         if self.cosmic_max_width < 1 or self.cosmic_passes < 1:
             raise ValueError("宇宙射线最大宽度和迭代次数必须≥1")
-        if self.resample_enabled and self.resample_step <= 0:
-            raise ValueError("重采样步长必须大于0")
         if self.baseline_lambda <= 0:
             raise ValueError("基线λ必须大于0")
         if not 0 < self.baseline_p < 1:
@@ -277,14 +275,11 @@ def preprocess(x: np.ndarray, y: np.ndarray, cfg: PreprocessConfig) -> ProcessRe
     pieces_x: list[np.ndarray] = []
     pieces_y: list[np.ndarray] = []
     for start, end in ranges:
-        if cfg.resample_enabled:
-            grid = np.arange(start, end + cfg.resample_step * 0.25, cfg.resample_step)
-            grid = grid[(grid >= x.min()) & (grid <= x.max())]
-            py = np.interp(grid, x, y)
-            px = grid
-        else:
-            mask = (x >= start) & (x <= end)
-            px, py = x[mask], y[mask]
+        # validate()已确保固定开启1 cm⁻¹重采样，无需保留关闭分支。
+        grid = np.arange(start, end + cfg.resample_step * 0.25, cfg.resample_step)
+        grid = grid[(grid >= x.min()) & (grid <= x.max())]
+        py = np.interp(grid, x, y)
+        px = grid
         if len(px) < cfg.min_points:
             raise ValueError(f"波段{start:g}-{end:g} cm⁻¹只有{len(px)}个点")
         pieces_x.append(px)

@@ -9,10 +9,15 @@ from pathlib import Path
 from core import scan_spectra, summarize_records
 
 
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = BASE_DIR / "raw_data"
+DEFAULT_OUTPUT = BASE_DIR / "result" / "qc_annotations.csv"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Raman spectrum QC annotation tool with recursive folder sampling")
-    parser.add_argument("--data", default=r"D:\raw_data", help="Any folder containing TXT spectra")
-    parser.add_argument("--output", default=r"D:\raman_annotation_results\raman_qc_annotations_group01.csv")
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA_DIR, help="Any folder containing TXT spectra")
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--group0-size", type=int, default=50, help="Young/0 quota; -1 means all, 0 means none")
     parser.add_argument("--group1-size", type=int, default=50, help="Aging/1 quota; -1 means all, 0 means none")
     parser.add_argument("--unknown-size", type=int, default=0, help="Unknown-label quota; -1 means all")
@@ -37,6 +42,7 @@ def main():
 
     from gui import run_app
 
+    args.output.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
     run_app(args.data, args.output, args.group0_size, args.group1_size, args.unknown_size, args.seed, args.strategy)
 
 

@@ -1,9 +1,7 @@
 from sklearn.tree import DecisionTreeClassifier, export_text              #创建决策树分类器，并将训练后的树导出为文本规则
-from sklearn.model_selection import StratifiedKFold, cross_val_predict    #分层交叉验证工具；当前版本尚未实际使用
 from sklearn.metrics import confusion_matrix                              #计算二分类混淆矩阵
 
 import pandas as pd                                                        #读取、筛选和合并CSV表格
-import numpy as np                                                         #NumPy当前未直接使用，可作为后续数值处理工具
 from pathlib import Path                                                   #搜索目录中的CSV文件并处理路径
 
 mode = '1447'                                                              

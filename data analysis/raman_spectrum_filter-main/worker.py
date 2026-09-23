@@ -1,7 +1,5 @@
 import threading
-import traceback
                                                                                            #从相应的模块导入
-from state import Parameter_State
 from core import Back_Filter_Excute
 
 def Back_Worker ( params , log_function , progress_function  ):

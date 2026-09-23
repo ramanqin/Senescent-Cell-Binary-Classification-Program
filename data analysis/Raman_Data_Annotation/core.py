@@ -13,11 +13,20 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 
-TOOL_VERSION = "2.3.0-qc-assistant"
+TOOL_VERSION = "2.3.1-cn-labels"
 
 # 全项目统一：年轻为阴性类0，衰老为阳性类1。
 CLASS_MAP = {"young": 0, "aging": 1}
-CLASS_ALIASES = {"aging": "aging", "young": "young", "0": "young", "1": "aging"}
+CLASS_ALIASES = {
+    "young": "young",
+    "年轻": "young",
+    "年轻组": "young",
+    "0": "young",
+    "aging": "aging",
+    "衰老": "aging",
+    "衰老组": "aging",
+    "1": "aging",
+}
 QC_STATUSES = {"pass", "review", "fail"}
 
 ISSUE_FIELDS = [

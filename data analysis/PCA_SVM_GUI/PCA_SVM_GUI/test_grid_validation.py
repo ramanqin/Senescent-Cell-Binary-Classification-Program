@@ -69,14 +69,13 @@ class GridValidationTests(unittest.TestCase):
                 np.savetxt(folder / "spectrum.txt", np.column_stack([self.x, y]), delimiter="\t")
         config = self.config()
         config.update({
-            "outer_splits": 2,
-            "inner_splits": 2,
+            "cv_splits": 2,
             "random_seed": 42,
             "pca_variance": 0.95,
             "class_weight": "balanced",
-            "n_jobs": 1,
-            "c_values": [1.0],
-            "gamma_values": ["scale"],
+            "svm_kernel": "linear",
+            "svm_c": 1.0,
+            "svm_gamma": "scale",
             "roc_filename": "ROC.png",
         })
         result = run_analysis(config)

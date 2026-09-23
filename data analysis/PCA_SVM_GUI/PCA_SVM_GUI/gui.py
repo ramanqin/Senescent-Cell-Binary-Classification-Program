@@ -6,7 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from pca_svm_analysis import run_analysis
+from pca_svm_analysis import normalize_config, run_analysis
 
 
 def split_aliases(text: str) -> list[str]:
@@ -16,17 +16,19 @@ def split_aliases(text: str) -> list[str]:
 class PCA_SVM_App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("通用PCA-SVM光谱分析")
-        self.geometry("780x550")
-        self.minsize(720, 510)
+        self.title("PCA-SVM光谱分析：普通5折（固定参数）")
+        self.geometry("820x620")
+        self.minsize(780, 580)
 
         self.input_dir = tk.StringVar()
         self.negative_name = tk.StringVar(value="年轻")
         self.negative_aliases = tk.StringVar(value="年轻,年轻细胞,young")
         self.positive_name = tk.StringVar(value="衰老")
         self.positive_aliases = tk.StringVar(value="衰老,衰老细胞,aging")
-        self.outer_splits = tk.IntVar(value=5)
-        self.inner_splits = tk.IntVar(value=4)
+        self.cv_splits = tk.IntVar(value=5)
+        self.svm_kernel = tk.StringVar(value="linear")
+        self.svm_c = tk.DoubleVar(value=0.01)
+        self.svm_gamma = tk.StringVar(value="scale")
         self.pca_variance = tk.DoubleVar(value=0.95)
         self.status_text = tk.StringVar(value="请选择预处理光谱根目录。")
         self.result_dir: Path | None = None
@@ -38,7 +40,7 @@ class PCA_SVM_App(tk.Tk):
         root.pack(fill="both", expand=True)
         root.columnconfigure(1, weight=1)
 
-        ttk.Label(root, text="PCA-SVM光谱二分类", font=("Microsoft YaHei", 17, "bold")).grid(
+        ttk.Label(root, text="PCA-SVM：普通5折，固定参数", font=("Microsoft YaHei", 17, "bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 18)
         )
 
@@ -62,12 +64,18 @@ class PCA_SVM_App(tk.Tk):
 
         options = ttk.LabelFrame(root, text="分析参数", padding=10)
         options.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(14, 8))
-        ttk.Label(options, text="外层折数").grid(row=0, column=0, padx=(0, 5))
-        ttk.Spinbox(options, from_=2, to=10, width=6, textvariable=self.outer_splits).grid(row=0, column=1)
-        ttk.Label(options, text="内层折数").grid(row=0, column=2, padx=(20, 5))
-        ttk.Spinbox(options, from_=2, to=10, width=6, textvariable=self.inner_splits).grid(row=0, column=3)
-        ttk.Label(options, text="PCA保留方差").grid(row=0, column=4, padx=(20, 5))
-        ttk.Entry(options, width=8, textvariable=self.pca_variance).grid(row=0, column=5)
+        ttk.Label(options, text="交叉验证折数").grid(row=0, column=0, padx=(0, 5))
+        ttk.Entry(options, width=6, textvariable=self.cv_splits, state="readonly").grid(row=0, column=1)
+        ttk.Label(options, text="PCA保留方差").grid(row=0, column=2, padx=(20, 5))
+        ttk.Entry(options, width=8, textvariable=self.pca_variance).grid(row=0, column=3)
+        ttk.Label(options, text="固定核函数").grid(row=1, column=0, pady=8)
+        ttk.Combobox(options, width=8, textvariable=self.svm_kernel, values=("linear", "rbf"), state="readonly").grid(row=1, column=1)
+        ttk.Label(options, text="固定C").grid(row=1, column=2, padx=(20, 5))
+        ttk.Entry(options, width=8, textvariable=self.svm_c).grid(row=1, column=3)
+        ttk.Label(options, text="gamma（仅RBF）").grid(row=1, column=4, padx=(20, 5))
+        ttk.Entry(options, width=8, textvariable=self.svm_gamma).grid(row=1, column=5)
+        ttk.Label(options, text="无内层调参；请预先固定参数，不要按同一5折的最高分反复挑参数。",
+                  foreground="#8A4B08").grid(row=2, column=0, columnspan=6, sticky="w")
 
         ttk.Label(
             root,
@@ -113,7 +121,7 @@ class PCA_SVM_App(tk.Tk):
         if not 0 < variance < 1:
             raise ValueError("PCA保留方差必须在0与1之间，例如0.95")
         self.result_dir = input_path / "result_plot"
-        return {
+        return normalize_config({
             "input_dir": str(input_path),
             "output_dir": str(self.result_dir),
             "negative_class": {
@@ -126,18 +134,18 @@ class PCA_SVM_App(tk.Tk):
             },
             "extensions": ["txt", "csv", "dat"],
             "sample_depth_after_class": 1,
-            "outer_splits": int(self.outer_splits.get()),
-            "inner_splits": int(self.inner_splits.get()),
+            "cv_splits": 5,
             "random_seed": 42,
             "pca_variance": variance,
             "class_weight": "balanced",
-            "n_jobs": -1,
-            "c_values": [0.01, 0.1, 1.0, 10.0, 100.0],
-            "gamma_values": ["scale", 0.01, 0.1, 1.0],
+            "svm_kernel": self.svm_kernel.get(),
+            "svm_c": float(self.svm_c.get()),
+            "svm_gamma": self.svm_gamma.get().strip(),
+            "parameter_source": "GUI预设；本轮不搜索；默认linear/C=0.01参考此前P2/P9分析",
             "roc_filename": "ROC.png",
             "grid_tolerance": 1e-6,
             "min_points": 20,
-        }
+        })
 
     def _start(self) -> None:
         try:
@@ -148,7 +156,7 @@ class PCA_SVM_App(tk.Tk):
         self.run_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.progress.start(12)
-        self.status_text.set("正在读取光谱并进行嵌套交叉验证，请稍候……")
+        self.status_text.set("正在读取光谱并进行普通5折验证（固定参数，无内层搜索），请稍候……")
         threading.Thread(target=self._worker, args=(config,), daemon=True).start()
 
     def _worker(self, config: dict) -> None:

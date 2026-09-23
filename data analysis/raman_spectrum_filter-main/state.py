@@ -10,24 +10,23 @@ class Parameter_State:                              #定义一个类
     SNR_polyorder : int = 3
 
     # 细胞光谱清洗参数：不同衰老状态的正常细胞峰形差异较大，
-    # 不再用峰宽、峰高或跨区峰比限定生物学形态，只用SNR与各区波动
-    # 排除宇宙射线尖峰、强噪声和明显采集失败。
+    # P5默认将三个原始绝对STD上限设为极大值，实际不参与筛选；
+    # 主要用SNR与噪声区波动排除强噪声和明显采集失败。
     Finger_Peak_Min_Length : float = 0
     Finger_Peak_Min_Height : float = 0
-    Finger_Peak_Max_STD : float = 500
+    Finger_Peak_Max_STD : float = 1000000000
     Finger_Min_SNR : float = 35
     Finger_Noise_Max_STD : float = 500
     # 0表示不启用指纹峰宽上限；只有用户填写正数时才参与判断。
     Finger_Peak_Max_Length : float = 0
                                                                            #对应的参数进行初始化，设置默认值，为后续的参数传入做准备
     Silence_Min_SNR : float = 35
-    Silence_Max_STD : float = 50
+    Silence_Max_STD : float = 1000000000
 
     CH_Peak_Min_Length : float= 0
     CH_Peak_Min_Height : float = 0
-    # C-H峰区的标准差会随正常宽峰的绝对强度增大；P7全量复检后以700
-    # 作为保护上限，避免500误删强而完整的C-H峰。
-    CH_Peak_Max_STD : float = 700
+    # C-H峰区的标准差会随正常宽峰的绝对强度增大，使用极大默认上限。
+    CH_Peak_Max_STD : float = 1000000000
     CH_Min_SNR : float = 35
     CH_Noise_Max_STD : float = 500
 

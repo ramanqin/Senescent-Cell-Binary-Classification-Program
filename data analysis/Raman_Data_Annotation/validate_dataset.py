@@ -1,10 +1,18 @@
+import argparse
 from collections import Counter
+from pathlib import Path
 
 from core import calculate_qc_metrics, read_spectrum, scan_spectra
 
 
 def main():
-    records = scan_spectra(r"D:\raw_data", blind_order=False)
+    parser = argparse.ArgumentParser(description="Validate a Raman spectrum directory")
+    parser.add_argument("data", type=Path, help="Folder containing Raman TXT spectra")
+    parser.add_argument("--expected-files", type=int)
+    parser.add_argument("--expected-subjects", type=int)
+    parser.add_argument("--expected-spectra-per-subject", type=int)
+    args = parser.parse_args()
+    records = scan_spectra(args.data, blind_order=False)
     subject_counts = Counter((row["class_original"], row["subject_id"]) for row in records)
     spectrum_uids = {row["spectrum_uid"] for row in records}
 
@@ -25,9 +33,13 @@ def main():
         except Exception as exc:
             errors.append((record["file_relative_path"], str(exc)))
 
-    assert len(records) == 1000
-    assert len(spectrum_uids) == 1000
-    assert all(count == 50 for count in subject_counts.values())
+    if args.expected_files is not None:
+        assert len(records) == args.expected_files
+        assert len(spectrum_uids) == args.expected_files
+    if args.expected_subjects is not None:
+        assert len(subject_counts) == args.expected_subjects
+    if args.expected_spectra_per_subject is not None:
+        assert all(count == args.expected_spectra_per_subject for count in subject_counts.values())
     assert not errors
 
     print("FULL_VALIDATION_OK")

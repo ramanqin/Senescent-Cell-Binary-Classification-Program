@@ -1,21 +1,12 @@
-import pandas as pd
-import numpy as np
 from pathlib import Path
-import matplotlib.pyplot as plt
-from scipy import signal
-import shutil
-import bisect
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 
 import tkinter as tk 
 from tkinter import ttk
 from tkinter import filedialog
-from tkinter import font 
 
-import threading
 import queue
-import traceback
 
 from state import Parameter_State
 from worker import Worker_Start
@@ -852,6 +843,5 @@ def App():
     #         log("__DONE__")    
 
     # Check_Log_Queue()
-
 
 

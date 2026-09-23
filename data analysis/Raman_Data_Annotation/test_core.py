@@ -38,6 +38,19 @@ class CoreTests(unittest.TestCase):
         labels = {r["class_original"]: r["class_binary"] for r in records}
         self.assertEqual(labels, {"aging": 1, "young": 0})
 
+    def test_chinese_group_folders_use_the_same_labels(self):
+        chinese_root = self.root / "中文分组"
+        x = np.linspace(273.14, 3746.91, 1340)
+        for group, subject in (("年轻", "11"), ("衰老", "2")):
+            folder = chinese_root / group / subject
+            folder.mkdir(parents=True)
+            y = 1000 + 100 * np.sin(x / 150)
+            np.savetxt(folder / "Auto-1_spec.txt", np.column_stack([x, y]), delimiter="\t")
+
+        records = scan_spectra(chinese_root, blind_order=False)
+        labels = {r["class_original"]: r["class_binary"] for r in records}
+        self.assertEqual(labels, {"aging": 1, "young": 0})
+
     def test_any_folder_is_accepted(self):
         self.assertEqual(resolve_input_folder(self.root / "young"), (self.root / "young").resolve())
         self.assertEqual(resolve_input_folder(self.root / "young" / "11"), (self.root / "young" / "11").resolve())

@@ -12,6 +12,29 @@ from spectral_preprocessor import PreprocessConfig, find_spectra
 
 
 class FileDiscoveryTests(unittest.TestCase):
+    def test_fixed_step_warns_when_input_coverage_differs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source_root = root / 'input'
+            source_root.mkdir()
+            files = []
+            for name, start in [('full', 600), ('partial', 603)]:
+                x = np.arange(start, 1801.0, 3.0)
+                path = source_root / (name + '.txt')
+                np.savetxt(path, np.column_stack([x, 1000 + np.sin(x / 80)]))
+                files.append(path)
+            dummy = SimpleNamespace(stop_event=threading.Event(), events=Queue())
+            options = {'format': 'txt', 'suffix': '_processed', 'precision': 8,
+                       'preserve': True, 'overwrite': False}
+            SpectrumPreprocessorApp._batch_worker(
+                dummy, source_root, root / 'out', files, PreprocessConfig(), options
+            )
+            events = list(dummy.events.queue)
+            done = [event for event in events if event[0] == 'done'][0]
+            self.assertEqual(done[1:3], (2, 0))
+            self.assertIn('覆盖范围', done[-1])
+            self.assertNotIn('建议启用重采样', done[-1])
+
     def test_reports_failed_and_result_directories_are_excluded(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

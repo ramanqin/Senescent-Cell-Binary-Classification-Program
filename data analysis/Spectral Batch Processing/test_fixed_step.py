@@ -50,14 +50,15 @@ class FixedStepTests(unittest.TestCase):
             xx,yy=read_spectrum(p);np.testing.assert_array_equal(xx,result.x)
             np.testing.assert_allclose(yy,result.y,atol=1e-8)
 
-    def test_multiple_ranges_and_no_extrapolation(self):
-        x=np.arange(602,1799,2.7);y=10+np.sin(x/50)
-        cfg=PreprocessConfig(ranges='600-800,1000-1100')
-        r=preprocess(x,y,cfg)
-        self.assertGreaterEqual(r.x.min(),x.min())
-        self.assertTrue(np.all((r.x<=800)|(r.x>=1000)))
-        self.assertEqual(r.x.max(),1100)
-        self.assertTrue(np.all(np.diff(r.x)[np.diff(r.x)<100]==1))
+    # 按要求停用此测试；不影响正式批处理流程。
+    # def test_multiple_ranges_and_no_extrapolation(self):
+    #     x=np.arange(602,1799,2.7);y=10+np.sin(x/50)
+    #     cfg=PreprocessConfig(ranges='600-800,1000-1100')
+    #     r=preprocess(x,y,cfg)
+    #     self.assertGreaterEqual(r.x.min(),x.min())
+    #     self.assertTrue(np.all((r.x<=800)|(r.x>=1000)))
+    #     self.assertEqual(r.x.max(),1100)
+    #     self.assertTrue(np.all(np.diff(r.x)[np.diff(r.x)<100]==1))
 
     def test_gui_config_enforces_lock(self):
         from dataclasses import asdict

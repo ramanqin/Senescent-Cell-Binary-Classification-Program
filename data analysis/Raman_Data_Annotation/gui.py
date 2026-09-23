@@ -312,9 +312,11 @@ class RamanAnnotationApp:
             self.data_root_var.set(selected)
 
     def _choose_save_path(self):
+        current_path = Path(self.save_path_var.get() or self.state.save_csv_path)
         selected = filedialog.asksaveasfilename(
             parent=self.root,
-            initialfile="raman_qc_annotations.csv",
+            initialdir=str(current_path.parent),
+            initialfile=current_path.name,
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv")],
         )

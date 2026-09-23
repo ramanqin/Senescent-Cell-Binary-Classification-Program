@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 import queue
 import threading
-import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -410,8 +409,8 @@ class SpectrumPreprocessorApp(tk.Tk):
             "output": options,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         grid_warning = ""
-        if not cfg.resample_enabled and len(output_grids) > 1:
-            grid_warning = f"检测到{len(output_grids)}套输出波数网格；建模前建议启用重采样。"
+        if len(output_grids) > 1:
+            grid_warning = f"检测到{len(output_grids)}套输出波数网格；已固定步长1 cm⁻¹，请检查原始光谱的覆盖范围，建模前统一有效波数区间。"
         self.events.put(("done", success, failed, skipped, len(report), str(manifest_path),
                          self.stop_event.is_set(), grid_warning))
 

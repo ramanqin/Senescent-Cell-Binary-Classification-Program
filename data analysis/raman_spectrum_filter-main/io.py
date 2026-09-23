@@ -1,4 +1,3 @@
-import pandas as pd
 from tkinter import filedialog
 from pathlib import Path
 import tkinter as tk
@@ -59,4 +58,3 @@ def Export_Folder_Choose():                         #定义了一个名为选择
 
 #     Importing_Txt_Files = Import_File_Folder_Path.rglob ( File_Types )
 #     Importing_Dfs = pd.read_csv ()
-

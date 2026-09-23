@@ -6,10 +6,13 @@ from typing import Optional
 import pandas as pd
 
 
+BASE_DIR = Path(__file__).resolve().parent
+
+
 @dataclass
 class ProcessState:
-    data_root: Path = Path(r"D:\raw_data")
-    save_csv_path: Path = Path(r"D:\raman_annotation_results\raman_qc_annotations_group01.csv")
+    data_root: Path = BASE_DIR / "raw_data"
+    save_csv_path: Path = BASE_DIR / "result" / "qc_annotations.csv"
     group0_size: int = 50
     group1_size: int = 50
     unknown_size: int = 0

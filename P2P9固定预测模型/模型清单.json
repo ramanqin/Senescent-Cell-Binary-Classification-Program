@@ -1,0 +1,26 @@
+{
+  "description": "P2年轻53个、P9衰老38个训练的固定最终模型；预测时不重新训练",
+  "class_mapping": {
+    "0": "年轻",
+    "1": "衰老"
+  },
+  "input": "预处理后按个体组织的600-1800 cm^-1、步长1、1201点TXT光谱；同一编号内全部合格光谱取平均",
+  "validation": "开发阶段固定参数普通分层5折；本文件为用全部P2/P9编号拟合的最终模型，不是某一折模型",
+  "models": {
+    "PCA-SVM": {
+      "file": "PCA-SVM.joblib",
+      "sha256": "b021221d6c4c34a9e93d3d22db6059bdaa61a9c22fd50dca412e448c1710032c",
+      "score_type": "SVM决策值；不是概率"
+    },
+    "PCA-逻辑回归": {
+      "file": "PCA-逻辑回归.joblib",
+      "sha256": "ab7098f380bf6585cfc7ab553706a85a0dd3912991ea829b75fc0f2df26dcdf4",
+      "score_type": "衰老类预测概率"
+    },
+    "随机森林": {
+      "file": "随机森林.joblib",
+      "sha256": "1ab109f3673f2df1853cd44f44a86f7261a3b9940b5ed9a50faa4abf622bd088",
+      "score_type": "衰老类预测概率"
+    }
+  }
+}

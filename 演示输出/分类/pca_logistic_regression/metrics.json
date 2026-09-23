@@ -1,0 +1,41 @@
+{
+  "model": "pca_logistic_regression",
+  "independent_subjects": 10,
+  "class_names": [
+    "年轻",
+    "衰老"
+  ],
+  "class_counts": [
+    5,
+    5
+  ],
+  "validation_method": "StratifiedKFold_fixed_parameters",
+  "cv_splits": 5,
+  "random_seed": 42,
+  "parameter_search_performed": false,
+  "fixed_parameters": {
+    "pca_variance": 0.95,
+    "C": 0.001,
+    "l1_ratio": 0.0,
+    "regularization": "L2",
+    "solver": "saga",
+    "class_weight": "balanced",
+    "random_state": 42
+  },
+  "parameter_source": "固定参数来自此前参数比较结果；本轮不搜索参数，仍有历史选择影响",
+  "final_model_note": "全数据最终模型与折内评价模型分开；报告指标全部来自折外预测",
+  "metrics": {
+    "roc_auc": 1.0,
+    "accuracy": 0.5,
+    "balanced_accuracy": 0.5,
+    "sensitivity_positive": 0.0,
+    "specificity_negative": 1.0,
+    "precision_positive": 0.0,
+    "f1_positive": 0.0,
+    "mcc": 0.0,
+    "TN": 5,
+    "FP": 0,
+    "FN": 5,
+    "TP": 0
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "pca": {
+    "supervised": false,
+    "PC1": 0.999748144862624,
+    "PC2": 4.4570820326008804e-05
+  },
+  "tsne": {
+    "supervised": false,
+    "global_embedding_warning": true,
+    "pca95_components": 1,
+    "perplexity": 3.0,
+    "initialization": "random",
+    "random_seed": 42,
+    "silhouette_by_class_label": 0.9177586436271667
+  }
+}

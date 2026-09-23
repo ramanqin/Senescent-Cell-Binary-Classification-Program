@@ -1,0 +1,26 @@
+{
+  "输入目录": "D:\\Raman Spectroscopy Aging Analysis\\示例数据\\已预处理光谱",
+  "个体数": 10,
+  "输入矩阵形状": [
+    10,
+    1201
+  ],
+  "先按个体对合格光谱求平均": true,
+  "使用P6或其他测试集重新训练": false,
+  "PCA或标准化重新拟合": false,
+  "阈值调整": false,
+  "模型核查": {
+    "PCA-SVM": {
+      "模型SHA256": "b021221d6c4c34a9e93d3d22db6059bdaa61a9c22fd50dca412e448c1710032c",
+      "未重新拟合": true
+    },
+    "PCA-逻辑回归": {
+      "模型SHA256": "ab7098f380bf6585cfc7ab553706a85a0dd3912991ea829b75fc0f2df26dcdf4",
+      "未重新拟合": true
+    },
+    "随机森林": {
+      "模型SHA256": "1ab109f3673f2df1853cd44f44a86f7261a3b9940b5ed9a50faa4abf622bd088",
+      "未重新拟合": true
+    }
+  }
+}

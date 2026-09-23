@@ -1,0 +1,21 @@
+# Local Python environments and caches
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated analyses and first-run output
+演示输出/
+**/cleaning_run_*/
+**/preprocessing_run_*/
+**/analysis_run_*/
+**/result/
+**/results/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
